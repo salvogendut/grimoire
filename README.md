@@ -123,6 +123,10 @@ quit. Non-destructive window commands execute immediately. Destructive commands
 such as `close sparrow` require confirmation. Use `--dry-run` with
 `--listen-loop` to transcribe and parse without executing.
 
+Dictation uses the focused window. Say `type hello world` to paste text into
+the active app. Common terminal words are normalized before paste, for example
+`type ls minus la enter` becomes `ls -la` followed by Enter.
+
 Only execute listened commands when you explicitly opt in:
 
 ```sh

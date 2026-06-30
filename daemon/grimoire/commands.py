@@ -62,6 +62,60 @@ DESTRUCTIVE_ACTIONS = {"close"}
 _STOPWORDS = {"the", "a", "an", "window", "pane", "one"}
 _DICTATION_PREFIXES = ("type", "dictate", "write")
 
+_DICTATION_SYMBOLS = {
+    "minus": "-",
+    "dash": "-",
+    "hyphen": "-",
+    "slash": "/",
+    "forward slash": "/",
+    "backslash": "\\",
+    "back slash": "\\",
+    "dot": ".",
+    "period": ".",
+    "point": ".",
+    "underscore": "_",
+    "under score": "_",
+    "equals": "=",
+    "equal": "=",
+    "colon": ":",
+    "semicolon": ";",
+    "comma": ",",
+    "pipe": "|",
+    "bar": "|",
+    "ampersand": "&",
+    "quote": '"',
+    "quotes": '"',
+    "double quote": '"',
+    "single quote": "'",
+    "apostrophe": "'",
+    "open parenthesis": "(",
+    "close parenthesis": ")",
+    "left parenthesis": "(",
+    "right parenthesis": ")",
+    "enter": "\n",
+    "return": "\n",
+    "new line": "\n",
+    "newline": "\n",
+}
+
+_ATTACH_TO_NEXT = {"-", "/", "\\", "_", ".", "=", "|", "&", "(", '"', "'"}
+_ATTACH_TO_PREVIOUS = {"/", "\\", "_", ".", ",", ":", ";", ")", '"', "'"}
+_OPEN_QUOTES = {'"', "'"}
+_PATH_COMMANDS = {
+    "cd",
+    "cat",
+    "code",
+    "cp",
+    "ls",
+    "mkdir",
+    "mv",
+    "nano",
+    "open",
+    "rm",
+    "touch",
+    "vim",
+}
+
 
 @dataclass(frozen=True)
 class ParsedCommand:
@@ -114,6 +168,42 @@ def is_supported_command(parsed: ParsedCommand) -> bool:
 
 def requires_confirmation(parsed: ParsedCommand) -> bool:
     return parsed.is_window_command and parsed.action in DESTRUCTIVE_ACTIONS
+
+
+def normalize_dictation_text(text: str) -> str:
+    pieces = _dictation_pieces(text)
+    output = ""
+    attach_next = False
+    open_quotes: set[str] = set()
+
+    for piece in pieces:
+        if piece == "\n":
+            output = output.rstrip()
+            output += "\n"
+            attach_next = False
+            continue
+
+        if piece in _OPEN_QUOTES:
+            if piece in open_quotes:
+                output = output.rstrip()
+                output += piece
+                open_quotes.remove(piece)
+                attach_next = False
+            else:
+                if output and not output[-1].isspace():
+                    output += " "
+                output += piece
+                open_quotes.add(piece)
+                attach_next = True
+            continue
+
+        if _needs_space(output, piece, attach_next):
+            output += " "
+
+        output += piece
+        attach_next = piece in _ATTACH_TO_NEXT
+
+    return output.rstrip(" ")
 
 
 def _parse_dictation(raw: str) -> str | None:
@@ -175,3 +265,35 @@ def _tokens(text: str) -> list[str]:
         for token in normalized.split()
         if token and token not in _STOPWORDS
     ]
+
+
+def _dictation_pieces(text: str) -> list[str]:
+    words = text.split()
+    pieces: list[str] = []
+    index = 0
+
+    while index < len(words):
+        two_word = " ".join(words[index:index + 2]).lower()
+        if two_word in _DICTATION_SYMBOLS:
+            pieces.append(_DICTATION_SYMBOLS[two_word])
+            index += 2
+            continue
+
+        word = words[index]
+        pieces.append(_DICTATION_SYMBOLS.get(word.lower(), word))
+        index += 1
+
+    return pieces
+
+
+def _needs_space(output: str, piece: str, attach_next: bool) -> bool:
+    if not output or output[-1].isspace() or attach_next:
+        return False
+
+    if piece in {"/", "\\"} and output.split()[-1].lower() in _PATH_COMMANDS:
+        return True
+
+    if piece in _ATTACH_TO_PREVIOUS:
+        return False
+
+    return True

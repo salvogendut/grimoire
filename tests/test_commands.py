@@ -2,6 +2,7 @@ from unittest import TestCase
 
 from daemon.grimoire.commands import (
     is_supported_command,
+    normalize_dictation_text,
     parse_transcript,
     requires_confirmation,
 )
@@ -109,3 +110,26 @@ class ParseTranscriptTests(TestCase):
         self.assertEqual(parsed.intent, "app")
         self.assertEqual(parsed.action, "open")
         self.assertEqual(parsed.app, "calculator")
+
+
+class NormalizeDictationTextTests(TestCase):
+    def test_terminal_option_words(self):
+        self.assertEqual(normalize_dictation_text("ls minus la"), "ls -la")
+
+    def test_path_words(self):
+        self.assertEqual(
+            normalize_dictation_text("cd slash var slash home"),
+            "cd /var/home",
+        )
+
+    def test_dot_words(self):
+        self.assertEqual(normalize_dictation_text("open Makefile dot txt"), "open Makefile.txt")
+
+    def test_enter_words(self):
+        self.assertEqual(normalize_dictation_text("git status enter"), "git status\n")
+
+    def test_quotes(self):
+        self.assertEqual(
+            normalize_dictation_text("git commit minus m quote first pass quote"),
+            'git commit -m "first pass"',
+        )

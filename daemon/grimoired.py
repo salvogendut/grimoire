@@ -12,6 +12,7 @@ import tempfile
 from grimoire.commands import (
     ParsedCommand,
     is_supported_command,
+    normalize_dictation_text,
     parse_transcript,
     requires_confirmation,
 )
@@ -303,8 +304,8 @@ def dispatch(parsed: ParsedCommand) -> int:
         return call_shell("LaunchApp", parsed.app)
 
     if parsed.intent == "dictate":
-        print("Dictation parsing works, but input execution is not implemented yet.", file=sys.stderr)
-        return 2
+        assert parsed.text is not None
+        return call_shell("PasteText", normalize_dictation_text(parsed.text))
 
     print(f"Unsupported command: {parsed}", file=sys.stderr)
     return 2

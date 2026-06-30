@@ -29,6 +29,10 @@ const DBUS_XML = `
       <arg type="s" name="query" direction="in"/>
       <arg type="b" name="ok" direction="out"/>
     </method>
+    <method name="PasteText">
+      <arg type="s" name="text" direction="in"/>
+      <arg type="b" name="ok" direction="out"/>
+    </method>
     <method name="FocusColor">
       <arg type="s" name="handle" direction="in"/>
       <arg type="b" name="ok" direction="out"/>
@@ -50,6 +54,7 @@ const TAB_MIN_HEIGHT = 92;
 const TAB_LETTER_HEIGHT = 13;
 const TAB_HEADER_OFFSET = 36;
 const TAB_LEFT_INSET = 16;
+const KEY_PAUSE_MS = 15;
 
 const PALETTE = [
     {name: 'yellow', hex: '#f2c94c'},
@@ -191,6 +196,21 @@ export default class GrimoireExtension extends Extension {
                 match.appInfo.launch([], null);
         } catch (error) {
             console.warn(`Grimoire: launch app failed: ${error}`);
+            return false;
+        }
+
+        return true;
+    }
+
+    PasteText(text) {
+        if (!text)
+            return false;
+
+        try {
+            St.Clipboard.get_default().set_text(St.ClipboardType.CLIPBOARD, text);
+            this._emitPasteShortcut();
+        } catch (error) {
+            console.warn(`Grimoire: paste text failed: ${error}`);
             return false;
         }
 
@@ -516,6 +536,47 @@ export default class GrimoireExtension extends Extension {
     _appMatch(entry) {
         const app = entry.id ? this._appSystem.lookup_app(entry.id) : null;
         return {app, appInfo: entry.appInfo};
+    }
+
+    _emitPasteShortcut() {
+        const backend = Clutter.get_default_backend();
+        const seat = backend.get_default_seat();
+        const device = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
+        const keyvals = this._focusedWindowUsesTerminalPaste()
+            ? [Clutter.KEY_Control_L, Clutter.KEY_Shift_L, Clutter.KEY_v]
+            : [Clutter.KEY_Control_L, Clutter.KEY_v];
+
+        let offset = 0;
+        for (const keyval of keyvals) {
+            this._notifyKeyval(device, keyval, Clutter.KeyState.PRESSED, offset);
+            offset += KEY_PAUSE_MS;
+        }
+
+        for (const keyval of [...keyvals].reverse()) {
+            this._notifyKeyval(device, keyval, Clutter.KeyState.RELEASED, offset);
+            offset += KEY_PAUSE_MS;
+        }
+    }
+
+    _notifyKeyval(device, keyval, state, offset) {
+        device.notify_keyval(global.get_current_time() + offset, keyval, state);
+    }
+
+    _focusedWindowUsesTerminalPaste() {
+        const window = global.display.focus_window;
+        if (!window)
+            return false;
+
+        const wmClass = normalizeSearchTerm(safeCall(window, 'get_wm_class', '') ?? '');
+        return [
+            'terminal',
+            'ptyxis',
+            'kgx',
+            'konsole',
+            'kitty',
+            'alacritty',
+            'wezterm',
+        ].some(name => wmClass.includes(name));
     }
 
     _emitWindowsChanged() {

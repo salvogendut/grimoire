@@ -62,6 +62,12 @@ Example payload:
 Launches the app matched by `query`. The extension first checks common aliases
 such as `calculator`, then falls back to GNOME's visible application registry.
 
+### `PasteText(s text) -> b`
+
+Copies `text` to the clipboard and emits the paste shortcut into the currently
+focused window. The extension uses terminal paste (`Ctrl+Shift+V`) for common
+terminal windows and normal paste (`Ctrl+V`) elsewhere.
+
 ### `FocusColor(s color) -> b`
 
 Focuses the window assigned to `color`. This method is kept for compatibility
