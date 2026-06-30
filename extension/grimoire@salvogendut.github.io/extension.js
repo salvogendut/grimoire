@@ -37,11 +37,11 @@ const DBUS_XML = `
   </interface>
 </node>`;
 
-const SIDEBAR_WIDTH = 10;
-const FOCUSED_SIDEBAR_WIDTH = 14;
 const TAB_WIDTH = 34;
 const TAB_MIN_HEIGHT = 92;
 const TAB_LETTER_HEIGHT = 13;
+const TAB_HEADER_OFFSET = 36;
+const TAB_LEFT_INSET = 16;
 
 const PALETTE = [
     {name: 'yellow', hex: '#f2c94c'},
@@ -244,17 +244,12 @@ export default class GrimoireExtension extends Extension {
             reactive: false,
             visible: false,
         });
-        const rail = new St.Widget({
-            style_class: 'grimoire-sidebar',
-            reactive: false,
-        });
         const tab = new St.BoxLayout({
             style_class: 'grimoire-tab',
             vertical: true,
             reactive: false,
         });
 
-        rail.set_style(`background-color: ${color.hex};`);
         tab.set_style(`background-color: ${color.hex}; color: ${contrastForColor(color.name)};`);
 
         for (const letter of bird.name.toUpperCase()) {
@@ -268,10 +263,9 @@ export default class GrimoireExtension extends Extension {
             tab.add_child(label);
         }
 
-        marker.add_child(rail);
         marker.add_child(tab);
 
-        this._records.set(window, {window, actor, color, bird, marker, rail, tab});
+        this._records.set(window, {window, actor, color, bird, marker, tab});
         this._attachMarker(window);
 
         window.connectObject(
@@ -343,27 +337,23 @@ export default class GrimoireExtension extends Extension {
             return;
         }
 
-        const frameRect = window.get_frame_rect();
-        const isFocused = global.display.focus_window === window;
-        const width = isFocused ? FOCUSED_SIDEBAR_WIDTH : SIDEBAR_WIDTH;
         const [actorX, actorY] = actor.get_position();
         const [actorWidth, actorHeight] = actor.get_size();
-        const localX = frameRect.x - actorX + frameRect.width - width;
-        const localY = frameRect.y - actorY;
-        const x = Math.round(Math.max(0, Math.min(localX, actorWidth - width)));
+        const frameRect = window.get_frame_rect();
+        const markerWidth = Math.round(Math.max(1, Math.min(TAB_WIDTH, actorWidth)));
+        const localX = frameRect.x - actorX + TAB_LEFT_INSET;
+        const localY = frameRect.y - actorY + TAB_HEADER_OFFSET;
+        const x = Math.round(Math.max(0, Math.min(localX, actorWidth - markerWidth)));
         const y = Math.round(Math.max(0, Math.min(localY, actorHeight - 1)));
-        const height = Math.round(Math.max(1, Math.min(frameRect.height, actorHeight - y)));
         const tabHeight = Math.round(Math.min(
-            height,
+            Math.max(1, actorHeight - y),
             Math.max(TAB_MIN_HEIGHT, record.bird.name.length * TAB_LETTER_HEIGHT + 14)));
 
         this._attachMarker(window);
         record.marker.set_position(x, y);
-        record.marker.set_size(width + TAB_WIDTH, height);
-        record.rail.set_position(0, 0);
-        record.rail.set_size(width, height);
-        record.tab.set_position(width, 0);
-        record.tab.set_size(TAB_WIDTH, tabHeight);
+        record.marker.set_size(markerWidth, tabHeight);
+        record.tab.set_position(0, 0);
+        record.tab.set_size(markerWidth, tabHeight);
         record.marker.show();
         actor.set_child_above_sibling(record.marker, null);
     }
