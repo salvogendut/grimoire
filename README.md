@@ -127,6 +127,10 @@ Dictation uses the focused window. Say `type hello world` to paste text into
 the active app. Common terminal words are normalized before paste, for example
 `type ls minus la enter` becomes `ls -la` followed by Enter.
 
+Dictation can also target a window handle directly. Say
+`type dove git status enter` or `dictate to crow hello world` to focus that
+window before pasting.
+
 Only execute listened commands when you explicitly opt in:
 
 ```sh

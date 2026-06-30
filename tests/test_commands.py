@@ -1,6 +1,9 @@
 from unittest import TestCase
+from unittest.mock import call, patch
 
+from daemon import grimoired
 from daemon.grimoire.commands import (
+    ParsedCommand,
     is_supported_command,
     normalize_dictation_text,
     parse_transcript,
@@ -49,7 +52,29 @@ class ParseTranscriptTests(TestCase):
         parsed = parse_transcript("type Makefile target")
 
         self.assertEqual(parsed.intent, "dictate")
+        self.assertIsNone(parsed.handle)
         self.assertEqual(parsed.text, "Makefile target")
+
+    def test_targeted_dictation(self):
+        parsed = parse_transcript("type dove git status enter")
+
+        self.assertEqual(parsed.intent, "dictate")
+        self.assertEqual(parsed.handle, "dove")
+        self.assertEqual(parsed.text, "git status enter")
+
+    def test_targeted_dictation_with_preamble(self):
+        parsed = parse_transcript("dictate to the crow window ls minus la")
+
+        self.assertEqual(parsed.intent, "dictate")
+        self.assertEqual(parsed.handle, "crow")
+        self.assertEqual(parsed.text, "ls minus la")
+
+    def test_short_dictation_handle_word_is_text(self):
+        parsed = parse_transcript("type dove")
+
+        self.assertEqual(parsed.intent, "dictate")
+        self.assertIsNone(parsed.handle)
+        self.assertEqual(parsed.text, "dove")
 
     def test_unknown(self):
         parsed = parse_transcript("please do something vague")
@@ -133,3 +158,31 @@ class NormalizeDictationTextTests(TestCase):
             normalize_dictation_text("git commit minus m quote first pass quote"),
             'git commit -m "first pass"',
         )
+
+
+class DispatchTests(TestCase):
+    def test_targeted_dictation_focuses_before_paste(self):
+        parsed = ParsedCommand(intent="dictate", handle="dove", text="git status enter")
+
+        with patch.object(grimoired, "call_shell", side_effect=[0, 0]) as call_shell:
+            with patch.object(grimoired.time, "sleep") as sleep:
+                status = grimoired.dispatch(parsed)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            call_shell.mock_calls,
+            [
+                call("RunWindowCommand", "dove", "focus"),
+                call("PasteText", "git status\n"),
+            ],
+        )
+        sleep.assert_called_once_with(0.15)
+
+    def test_targeted_dictation_stops_when_focus_fails(self):
+        parsed = ParsedCommand(intent="dictate", handle="dove", text="git status enter")
+
+        with patch.object(grimoired, "call_shell", return_value=1) as call_shell:
+            status = grimoired.dispatch(parsed)
+
+        self.assertEqual(status, 1)
+        call_shell.assert_called_once_with("RunWindowCommand", "dove", "focus")

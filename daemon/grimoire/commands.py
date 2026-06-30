@@ -145,7 +145,8 @@ def parse_transcript(transcript: str) -> ParsedCommand:
 
     dictation = _parse_dictation(raw)
     if dictation is not None:
-        return ParsedCommand(intent="dictate", text=dictation)
+        handle, text = _parse_dictation_target(dictation)
+        return ParsedCommand(intent="dictate", handle=handle, text=text)
 
     tokens = _tokens(raw)
     if len(tokens) < 2:
@@ -214,6 +215,23 @@ def _parse_dictation(raw: str) -> str | None:
             return raw[len(marker):].strip()
 
     return None
+
+
+def _parse_dictation_target(text: str) -> tuple[str | None, str]:
+    match = re.match(
+        r"^\s*(?:(?:to|into|in)\s+)?(?:(?:the|a|an)\s+)?"
+        r"(?P<handle>[a-z0-9]+)(?:\s+(?:window|pane))?\s+(?P<text>.+)$",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return None, text
+
+    handle = match.group("handle").lower()
+    if handle not in HANDLE_NAMES:
+        return None, text
+
+    return handle, match.group("text").strip()
 
 
 def _parse_action_handle(tokens: list[str]) -> ParsedCommand | None:

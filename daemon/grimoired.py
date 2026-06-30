@@ -8,14 +8,24 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 
-from grimoire.commands import (
-    ParsedCommand,
-    is_supported_command,
-    normalize_dictation_text,
-    parse_transcript,
-    requires_confirmation,
-)
+if __package__:
+    from .grimoire.commands import (
+        ParsedCommand,
+        is_supported_command,
+        normalize_dictation_text,
+        parse_transcript,
+        requires_confirmation,
+    )
+else:
+    from grimoire.commands import (
+        ParsedCommand,
+        is_supported_command,
+        normalize_dictation_text,
+        parse_transcript,
+        requires_confirmation,
+    )
 
 
 BUS_NAME = "org.grimoire.Shell"
@@ -305,6 +315,12 @@ def dispatch(parsed: ParsedCommand) -> int:
 
     if parsed.intent == "dictate":
         assert parsed.text is not None
+        if parsed.handle is not None:
+            focus_status = call_shell("RunWindowCommand", parsed.handle, "focus")
+            if focus_status != 0:
+                return focus_status
+            time.sleep(0.15)
+
         return call_shell("PasteText", normalize_dictation_text(parsed.text))
 
     print(f"Unsupported command: {parsed}", file=sys.stderr)
@@ -342,6 +358,9 @@ def call_shell(method: str, *args: str) -> int:
         print(result.stdout.rstrip())
     if result.stderr:
         print(result.stderr.rstrip(), file=sys.stderr)
+
+    if result.returncode == 0 and result.stdout.strip().startswith("(false"):
+        return 1
 
     return result.returncode
 
