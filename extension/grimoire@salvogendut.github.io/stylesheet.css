@@ -1,0 +1,20 @@
+.grimoire-marker {
+  border-radius: 0;
+}
+
+.grimoire-sidebar {
+  border-radius: 4px 0 0 4px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.34);
+}
+
+.grimoire-tab {
+  border-radius: 0 4px 4px 0;
+  padding-top: 7px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.36);
+}
+
+.grimoire-tab-letter {
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}

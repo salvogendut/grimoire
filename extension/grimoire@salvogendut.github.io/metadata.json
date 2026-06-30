@@ -1,0 +1,8 @@
+{
+  "uuid": "grimoire@salvogendut.github.io",
+  "name": "Grimoire",
+  "description": "Voice-addressable colored window handles for GNOME Shell.",
+  "shell-version": ["50"],
+  "url": "https://github.com/salvogendut/grimoire",
+  "version": 1
+}
