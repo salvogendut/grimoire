@@ -66,3 +66,24 @@ class ParseTranscriptTests(TestCase):
 
         self.assertFalse(requires_confirmation(parsed))
         self.assertTrue(is_supported_command(parsed))
+
+    def test_unmaximized_asr_variant(self):
+        parsed = parse_transcript("un-maximized dove")
+
+        self.assertEqual(parsed.intent, "window")
+        self.assertEqual(parsed.action, "unmaximize")
+        self.assertEqual(parsed.handle, "dove")
+
+    def test_un_maximized_asr_variant(self):
+        parsed = parse_transcript("un maximized dove")
+
+        self.assertEqual(parsed.intent, "window")
+        self.assertEqual(parsed.action, "unmaximize")
+        self.assertEqual(parsed.handle, "dove")
+
+    def test_restore_alias(self):
+        parsed = parse_transcript("restore dove")
+
+        self.assertEqual(parsed.intent, "window")
+        self.assertEqual(parsed.action, "unmaximize")
+        self.assertEqual(parsed.handle, "dove")

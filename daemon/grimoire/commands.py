@@ -43,6 +43,18 @@ WINDOW_ACTIONS = (
     "unfullscreen",
 )
 
+ACTION_ALIASES = {
+    "maximized": "maximize",
+    "unmaximized": "unmaximize",
+    "unmaximize": "unmaximize",
+    "restore": "unmaximize",
+    "restored": "unmaximize",
+    "minimized": "minimize",
+    "unminimized": "unminimize",
+    "fullscreened": "fullscreen",
+    "unfullscreened": "unfullscreen",
+}
+
 DESTRUCTIVE_ACTIONS = {"close"}
 
 _STOPWORDS = {"the", "a", "an", "window", "pane", "one"}
@@ -104,6 +116,7 @@ def _parse_dictation(raw: str) -> str | None:
 
 
 def _parse_action_handle(tokens: list[str]) -> ParsedCommand | None:
+    tokens = _normalize_action_tokens(tokens)
     first, second = tokens[0], tokens[1]
 
     if first in WINDOW_ACTIONS and second in HANDLE_NAMES:
@@ -113,6 +126,24 @@ def _parse_action_handle(tokens: list[str]) -> ParsedCommand | None:
         return ParsedCommand(intent="window", action=second, handle=first)
 
     return None
+
+
+def _normalize_action_tokens(tokens: list[str]) -> list[str]:
+    normalized: list[str] = []
+    index = 0
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "un" and index + 1 < len(tokens):
+            combined = f"un{tokens[index + 1]}"
+            normalized.append(ACTION_ALIASES.get(combined, combined))
+            index += 2
+            continue
+
+        normalized.append(ACTION_ALIASES.get(token, token))
+        index += 1
+
+    return normalized
 
 
 def _tokens(text: str) -> list[str]:
