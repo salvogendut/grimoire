@@ -78,6 +78,39 @@ Run the current tests:
 make test
 ```
 
+## Voice Prototype
+
+The first voice path uses a local `whisper.cpp` install if present at:
+
+```text
+/var/home/salvogendut/Dev/whisper.cpp/build/bin/whisper-cli
+/var/home/salvogendut/Dev/whisper.cpp/models/ggml-base.en.bin
+```
+
+Transcribe an existing WAV without executing anything:
+
+```sh
+python3 daemon/grimoired.py --audio-file /path/to/audio.wav
+```
+
+Record one short microphone utterance and parse it without executing:
+
+```sh
+python3 daemon/grimoired.py --listen --record-seconds 3
+```
+
+Only execute listened commands when you explicitly opt in:
+
+```sh
+python3 daemon/grimoired.py --listen --record-seconds 3 --execute-listen
+```
+
+You can override the recognizer with an ASR command template:
+
+```sh
+python3 daemon/grimoired.py --audio-file sample.wav --asr-command "my-asr {audio}"
+```
+
 ## Design Direction
 
 Grimoire has three cooperating layers:
