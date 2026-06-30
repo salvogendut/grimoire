@@ -14,7 +14,7 @@ if __package__:
     from .grimoire.commands import (
         ParsedCommand,
         is_supported_command,
-        normalize_dictation_text,
+        normalize_dictation_input,
         parse_transcript,
         requires_confirmation,
     )
@@ -22,7 +22,7 @@ else:
     from grimoire.commands import (
         ParsedCommand,
         is_supported_command,
-        normalize_dictation_text,
+        normalize_dictation_input,
         parse_transcript,
         requires_confirmation,
     )
@@ -321,7 +321,20 @@ def dispatch(parsed: ParsedCommand) -> int:
                 return focus_status
             time.sleep(0.15)
 
-        return call_shell("PasteText", normalize_dictation_text(parsed.text))
+        dictation = normalize_dictation_input(parsed.text)
+        if dictation.text:
+            paste_status = call_shell("PasteText", dictation.text)
+            if paste_status != 0:
+                return paste_status
+            if dictation.enter_presses:
+                time.sleep(0.08)
+
+        for _ in range(dictation.enter_presses):
+            key_status = call_shell("PressKey", "enter")
+            if key_status != 0:
+                return key_status
+
+        return 0
 
     print(f"Unsupported command: {parsed}", file=sys.stderr)
     return 2

@@ -68,6 +68,12 @@ Copies `text` to the clipboard and emits the paste shortcut into the currently
 focused window. The extension uses terminal paste (`Ctrl+Shift+V`) for common
 terminal windows and normal paste (`Ctrl+V`) elsewhere.
 
+### `PressKey(s key) -> b`
+
+Emits a single supported key press into the currently focused window. The first
+supported key is `enter`, used so terminal commands execute as real Return key
+events instead of pasted newlines.
+
 ### `FocusColor(s color) -> b`
 
 Focuses the window assigned to `color`. This method is kept for compatibility

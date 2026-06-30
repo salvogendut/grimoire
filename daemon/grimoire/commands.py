@@ -138,6 +138,12 @@ class ParsedCommand:
         return self.handle
 
 
+@dataclass(frozen=True)
+class DictationInput:
+    text: str
+    enter_presses: int = 0
+
+
 def parse_transcript(transcript: str) -> ParsedCommand:
     raw = transcript.strip()
     if not raw:
@@ -179,7 +185,8 @@ def normalize_dictation_text(text: str) -> str:
 
     for piece in pieces:
         if piece == "\n":
-            output = output.rstrip()
+            if not output.endswith("\n"):
+                output = output.rstrip()
             output += "\n"
             attach_next = False
             continue
@@ -205,6 +212,17 @@ def normalize_dictation_text(text: str) -> str:
         attach_next = piece in _ATTACH_TO_NEXT
 
     return output.rstrip(" ")
+
+
+def normalize_dictation_input(text: str) -> DictationInput:
+    normalized = normalize_dictation_text(text)
+    enter_presses = 0
+
+    while normalized.endswith("\n"):
+        enter_presses += 1
+        normalized = normalized[:-1].rstrip(" ")
+
+    return DictationInput(text=normalized, enter_presses=enter_presses)
 
 
 def _parse_dictation(raw: str) -> str | None:

@@ -125,7 +125,7 @@ such as `close sparrow` require confirmation. Use `--dry-run` with
 
 Dictation uses the focused window. Say `type hello world` to paste text into
 the active app. Common terminal words are normalized before paste, for example
-`type ls minus la enter` becomes `ls -la` followed by Enter.
+`type ls minus la enter` pastes `ls -la` and then presses Enter.
 
 Dictation can also target a window handle directly. Say
 `type dove git status enter` or `dictate to crow hello world` to focus that

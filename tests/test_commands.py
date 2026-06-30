@@ -3,8 +3,10 @@ from unittest.mock import call, patch
 
 from daemon import grimoired
 from daemon.grimoire.commands import (
+    DictationInput,
     ParsedCommand,
     is_supported_command,
+    normalize_dictation_input,
     normalize_dictation_text,
     parse_transcript,
     requires_confirmation,
@@ -159,12 +161,30 @@ class NormalizeDictationTextTests(TestCase):
             'git commit -m "first pass"',
         )
 
+    def test_trailing_enter_becomes_key_press(self):
+        self.assertEqual(
+            normalize_dictation_input("what's next enter"),
+            DictationInput(text="what's next", enter_presses=1),
+        )
+
+    def test_multiple_trailing_enters_become_key_presses(self):
+        self.assertEqual(
+            normalize_dictation_input("git status enter enter"),
+            DictationInput(text="git status", enter_presses=2),
+        )
+
+    def test_enter_only_has_no_paste_text(self):
+        self.assertEqual(
+            normalize_dictation_input("enter"),
+            DictationInput(text="", enter_presses=1),
+        )
+
 
 class DispatchTests(TestCase):
     def test_targeted_dictation_focuses_before_paste(self):
         parsed = ParsedCommand(intent="dictate", handle="dove", text="git status enter")
 
-        with patch.object(grimoired, "call_shell", side_effect=[0, 0]) as call_shell:
+        with patch.object(grimoired, "call_shell", side_effect=[0, 0, 0]) as call_shell:
             with patch.object(grimoired.time, "sleep") as sleep:
                 status = grimoired.dispatch(parsed)
 
@@ -173,10 +193,11 @@ class DispatchTests(TestCase):
             call_shell.mock_calls,
             [
                 call("RunWindowCommand", "dove", "focus"),
-                call("PasteText", "git status\n"),
+                call("PasteText", "git status"),
+                call("PressKey", "enter"),
             ],
         )
-        sleep.assert_called_once_with(0.15)
+        self.assertEqual(sleep.mock_calls, [call(0.15), call(0.08)])
 
     def test_targeted_dictation_stops_when_focus_fails(self):
         parsed = ParsedCommand(intent="dictate", handle="dove", text="git status enter")
@@ -186,3 +207,19 @@ class DispatchTests(TestCase):
 
         self.assertEqual(status, 1)
         call_shell.assert_called_once_with("RunWindowCommand", "dove", "focus")
+
+    def test_enter_only_dictation_skips_paste(self):
+        parsed = ParsedCommand(intent="dictate", handle="dove", text="enter")
+
+        with patch.object(grimoired, "call_shell", side_effect=[0, 0]) as call_shell:
+            with patch.object(grimoired.time, "sleep"):
+                status = grimoired.dispatch(parsed)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            call_shell.mock_calls,
+            [
+                call("RunWindowCommand", "dove", "focus"),
+                call("PressKey", "enter"),
+            ],
+        )

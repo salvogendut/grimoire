@@ -33,6 +33,10 @@ const DBUS_XML = `
       <arg type="s" name="text" direction="in"/>
       <arg type="b" name="ok" direction="out"/>
     </method>
+    <method name="PressKey">
+      <arg type="s" name="key" direction="in"/>
+      <arg type="b" name="ok" direction="out"/>
+    </method>
     <method name="FocusColor">
       <arg type="s" name="handle" direction="in"/>
       <arg type="b" name="ok" direction="out"/>
@@ -101,6 +105,11 @@ const APP_ALIASES = {
     settings: ['org.gnome.Settings.desktop'],
     software: ['org.gnome.Software.desktop'],
     terminal: ['org.gnome.Ptyxis.desktop', 'org.gnome.Terminal.desktop'],
+};
+
+const KEY_ALIASES = {
+    enter: Clutter.KEY_Return,
+    return: Clutter.KEY_Return,
 };
 
 function normalizeName(name) {
@@ -211,6 +220,21 @@ export default class GrimoireExtension extends Extension {
             this._emitPasteShortcut();
         } catch (error) {
             console.warn(`Grimoire: paste text failed: ${error}`);
+            return false;
+        }
+
+        return true;
+    }
+
+    PressKey(key) {
+        const keyval = KEY_ALIASES[normalizeName(key)];
+        if (!keyval)
+            return false;
+
+        try {
+            this._emitKeyvals([keyval]);
+        } catch (error) {
+            console.warn(`Grimoire: press key failed: ${error}`);
             return false;
         }
 
@@ -539,12 +563,17 @@ export default class GrimoireExtension extends Extension {
     }
 
     _emitPasteShortcut() {
-        const backend = Clutter.get_default_backend();
-        const seat = backend.get_default_seat();
-        const device = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
         const keyvals = this._focusedWindowUsesTerminalPaste()
             ? [Clutter.KEY_Control_L, Clutter.KEY_Shift_L, Clutter.KEY_v]
             : [Clutter.KEY_Control_L, Clutter.KEY_v];
+
+        this._emitKeyvals(keyvals);
+    }
+
+    _emitKeyvals(keyvals) {
+        const backend = Clutter.get_default_backend();
+        const seat = backend.get_default_seat();
+        const device = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
 
         let offset = 0;
         for (const keyval of keyvals) {
