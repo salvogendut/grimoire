@@ -42,6 +42,26 @@ Returns the ordered list of color names currently used for assignment.
 
 Returns the ordered list of bird names currently used for assignment.
 
+### `ListApps() -> s`
+
+Returns a JSON string containing launchable applications visible to GNOME.
+
+Example payload:
+
+```json
+[
+  {
+    "id": "org.gnome.Calculator.desktop",
+    "name": "Calculator"
+  }
+]
+```
+
+### `LaunchApp(s query) -> b`
+
+Launches the app matched by `query`. The extension first checks common aliases
+such as `calculator`, then falls back to GNOME's visible application registry.
+
 ### `FocusColor(s color) -> b`
 
 Focuses the window assigned to `color`. This method is kept for compatibility

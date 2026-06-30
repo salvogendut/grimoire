@@ -1,5 +1,6 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -20,6 +21,13 @@ const DBUS_XML = `
     </method>
     <method name="GetBirds">
       <arg type="as" name="birds" direction="out"/>
+    </method>
+    <method name="ListApps">
+      <arg type="s" name="apps_json" direction="out"/>
+    </method>
+    <method name="LaunchApp">
+      <arg type="s" name="query" direction="in"/>
+      <arg type="b" name="ok" direction="out"/>
     </method>
     <method name="FocusColor">
       <arg type="s" name="handle" direction="in"/>
@@ -80,8 +88,22 @@ const COMMANDS = new Set([
     'unfullscreen',
 ]);
 
+const APP_ALIASES = {
+    calculator: ['org.gnome.Calculator.desktop'],
+    files: ['org.gnome.Nautilus.desktop'],
+    firefox: ['org.mozilla.firefox.desktop'],
+    browser: ['org.mozilla.firefox.desktop'],
+    settings: ['org.gnome.Settings.desktop'],
+    software: ['org.gnome.Software.desktop'],
+    terminal: ['org.gnome.Ptyxis.desktop', 'org.gnome.Terminal.desktop'],
+};
+
 function normalizeName(name) {
     return `${name}`.trim().toLowerCase();
+}
+
+function normalizeSearchTerm(name) {
+    return normalizeName(name).replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 function contrastForColor(colorName) {
@@ -107,6 +129,7 @@ export default class GrimoireExtension extends Extension {
         this._records = new Map();
         this._busNameId = 0;
         this._dbusImpl = null;
+        this._appSystem = Shell.AppSystem.get_default();
 
         this._exportDbus();
 
@@ -132,6 +155,7 @@ export default class GrimoireExtension extends Extension {
         global.display.disconnectObject(this);
 
         this._unexportDbus();
+        this._appSystem = null;
 
         for (const window of [...this._records.keys()])
             this._removeWindow(window, false);
@@ -149,6 +173,28 @@ export default class GrimoireExtension extends Extension {
 
     GetBirds() {
         return BIRDS.map(bird => bird.name);
+    }
+
+    ListApps() {
+        return JSON.stringify(this._listApps());
+    }
+
+    LaunchApp(query) {
+        const match = this._findApp(query);
+        if (!match)
+            return false;
+
+        try {
+            if (match.app)
+                match.app.open_new_window(-1);
+            else
+                match.appInfo.launch([], null);
+        } catch (error) {
+            console.warn(`Grimoire: launch app failed: ${error}`);
+            return false;
+        }
+
+        return true;
     }
 
     FocusColor(handle) {
@@ -421,6 +467,55 @@ export default class GrimoireExtension extends Extension {
             stable_sequence: safeCall(record.window, 'get_stable_sequence', 0) ?? 0,
             focused: global.display.focus_window === record.window,
         }));
+    }
+
+    _listApps() {
+        return Gio.AppInfo.get_all()
+            .filter(appInfo => appInfo.should_show())
+            .map(appInfo => ({
+                id: appInfo.get_id() ?? '',
+                name: appInfo.get_name() ?? '',
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name));
+    }
+
+    _findApp(query) {
+        const normalizedQuery = normalizeSearchTerm(query);
+        if (!normalizedQuery)
+            return null;
+
+        for (const appId of APP_ALIASES[normalizedQuery] ?? []) {
+            const app = this._appSystem.lookup_app(appId);
+            if (app)
+                return {app, appInfo: app.get_app_info()};
+        }
+
+        const apps = Gio.AppInfo.get_all()
+            .filter(appInfo => appInfo.should_show())
+            .map(appInfo => ({
+                appInfo,
+                id: appInfo.get_id() ?? '',
+                name: appInfo.get_name() ?? '',
+            }));
+
+        const exact = apps.find(entry =>
+            normalizeSearchTerm(entry.name) === normalizedQuery ||
+            normalizeSearchTerm(entry.id.replace(/\.desktop$/, '')) === normalizedQuery);
+        if (exact)
+            return this._appMatch(exact);
+
+        const contains = apps.filter(entry =>
+            normalizeSearchTerm(entry.name).includes(normalizedQuery) ||
+            normalizeSearchTerm(entry.id).includes(normalizedQuery));
+        if (contains.length === 1)
+            return this._appMatch(contains[0]);
+
+        return null;
+    }
+
+    _appMatch(entry) {
+        const app = entry.id ? this._appSystem.lookup_app(entry.id) : null;
+        return {app, appInfo: entry.appInfo};
     }
 
     _emitWindowsChanged() {

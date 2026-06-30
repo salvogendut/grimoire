@@ -43,6 +43,8 @@ WINDOW_ACTIONS = (
     "unfullscreen",
 )
 
+APP_ACTIONS = ("open", "launch", "start")
+
 ACTION_ALIASES = {
     "maximized": "maximize",
     "unmaximized": "unmaximize",
@@ -66,11 +68,16 @@ class ParsedCommand:
     intent: str
     action: str | None = None
     handle: str | None = None
+    app: str | None = None
     text: str | None = None
 
     @property
     def is_window_command(self) -> bool:
         return self.intent == "window"
+
+    @property
+    def is_app_command(self) -> bool:
+        return self.intent == "app"
 
     @property
     def color(self) -> str | None:
@@ -94,11 +101,15 @@ def parse_transcript(transcript: str) -> ParsedCommand:
     if parsed is not None:
         return parsed
 
+    parsed = _parse_app_action(tokens)
+    if parsed is not None:
+        return parsed
+
     return ParsedCommand(intent="unknown", text=raw)
 
 
 def is_supported_command(parsed: ParsedCommand) -> bool:
-    return parsed.is_window_command or parsed.intent == "dictate"
+    return parsed.is_window_command or parsed.is_app_command or parsed.intent == "dictate"
 
 
 def requires_confirmation(parsed: ParsedCommand) -> bool:
@@ -126,6 +137,17 @@ def _parse_action_handle(tokens: list[str]) -> ParsedCommand | None:
         return ParsedCommand(intent="window", action=second, handle=first)
 
     return None
+
+
+def _parse_app_action(tokens: list[str]) -> ParsedCommand | None:
+    if len(tokens) < 2:
+        return None
+
+    action = ACTION_ALIASES.get(tokens[0], tokens[0])
+    if action not in APP_ACTIONS:
+        return None
+
+    return ParsedCommand(intent="app", action="open", app=" ".join(tokens[1:]))
 
 
 def _normalize_action_tokens(tokens: list[str]) -> list[str]:

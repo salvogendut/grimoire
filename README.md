@@ -11,6 +11,7 @@ focus yellow
 focus sparrow
 maximize blue
 close green
+open calculator
 type make test
 ```
 
@@ -70,6 +71,18 @@ List the windows known to the extension:
 
 ```sh
 python3 daemon/grimoired.py --list-windows
+```
+
+List launchable apps known to the extension:
+
+```sh
+python3 daemon/grimoired.py --list-apps
+```
+
+Open an application by voice-style command text:
+
+```sh
+python3 daemon/grimoired.py --command "open calculator"
 ```
 
 Run the current tests:

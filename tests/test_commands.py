@@ -87,3 +87,25 @@ class ParseTranscriptTests(TestCase):
         self.assertEqual(parsed.intent, "window")
         self.assertEqual(parsed.action, "unmaximize")
         self.assertEqual(parsed.handle, "dove")
+
+    def test_open_app(self):
+        parsed = parse_transcript("open calculator")
+
+        self.assertEqual(parsed.intent, "app")
+        self.assertEqual(parsed.action, "open")
+        self.assertEqual(parsed.app, "calculator")
+        self.assertTrue(is_supported_command(parsed))
+
+    def test_launch_multiword_app(self):
+        parsed = parse_transcript("launch system monitor")
+
+        self.assertEqual(parsed.intent, "app")
+        self.assertEqual(parsed.action, "open")
+        self.assertEqual(parsed.app, "system monitor")
+
+    def test_start_app_with_stopword(self):
+        parsed = parse_transcript("start the calculator")
+
+        self.assertEqual(parsed.intent, "app")
+        self.assertEqual(parsed.action, "open")
+        self.assertEqual(parsed.app, "calculator")

@@ -44,6 +44,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Ask the shell extension for its current color registry.",
     )
     parser.add_argument(
+        "--list-apps",
+        action="store_true",
+        help="Ask the shell extension for launchable applications.",
+    )
+    parser.add_argument(
         "--listen",
         action="store_true",
         help="Record one short utterance, transcribe it, and parse it.",
@@ -80,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_windows:
         return call_shell("ListWindows")
 
+    if args.list_apps:
+        return call_shell("ListApps")
+
     if args.listen_loop:
         return listen_loop(args)
 
@@ -88,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.command:
         parser.error(
-            "--command is required unless --list-windows, --listen, "
+            "--command is required unless --list-windows, --list-apps, --listen, "
             "--listen-loop, or --audio-file is used"
         )
 
@@ -289,6 +297,10 @@ def dispatch(parsed: ParsedCommand) -> int:
         assert parsed.handle is not None
         assert parsed.action is not None
         return call_shell("RunWindowCommand", parsed.handle, parsed.action)
+
+    if parsed.is_app_command:
+        assert parsed.app is not None
+        return call_shell("LaunchApp", parsed.app)
 
     if parsed.intent == "dictate":
         print("Dictation parsing works, but input execution is not implemented yet.", file=sys.stderr)
