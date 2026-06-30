@@ -9,7 +9,12 @@ import subprocess
 import sys
 import tempfile
 
-from grimoire.commands import ParsedCommand, parse_transcript
+from grimoire.commands import (
+    ParsedCommand,
+    is_supported_command,
+    parse_transcript,
+    requires_confirmation,
+)
 
 
 BUS_NAME = "org.grimoire.Shell"
@@ -44,6 +49,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Record one short utterance, transcribe it, and parse it.",
     )
     parser.add_argument(
+        "--listen-loop",
+        action="store_true",
+        help="Run an Enter-to-record command loop. Press q then Enter to quit.",
+    )
+    parser.add_argument(
         "--execute-listen",
         action="store_true",
         help="Execute a listened command. Without this, listen mode is parse-only.",
@@ -70,11 +80,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_windows:
         return call_shell("ListWindows")
 
+    if args.listen_loop:
+        return listen_loop(args)
+
     if args.listen or args.audio_file:
         return listen_once(args)
 
     if not args.command:
-        parser.error("--command is required unless --list-windows, --listen, or --audio-file is used")
+        parser.error(
+            "--command is required unless --list-windows, --listen, "
+            "--listen-loop, or --audio-file is used"
+        )
 
     parsed = parse_transcript(args.command)
     if args.dry_run:
@@ -84,7 +100,51 @@ def main(argv: list[str] | None = None) -> int:
     return dispatch(parsed)
 
 
+def listen_loop(args: argparse.Namespace) -> int:
+    print("Press Enter to record a command. Type q then Enter to quit.")
+    print("Use Ctrl+C to stop immediately.")
+
+    while True:
+        try:
+            prompt = input("grimoire> ")
+        except EOFError:
+            print()
+            return 0
+        except KeyboardInterrupt:
+            print()
+            return 130
+
+        if prompt.strip().lower() in {"q", "quit", "exit"}:
+            return 0
+
+        parsed = listen_and_parse(args)
+        if not is_supported_command(parsed):
+            print("No supported command recognized.", file=sys.stderr)
+            continue
+
+        if args.dry_run:
+            continue
+
+        if requires_confirmation(parsed) and not confirm_command(parsed):
+            print("skipped")
+            continue
+
+        dispatch(parsed)
+
+
 def listen_once(args: argparse.Namespace) -> int:
+    parsed = listen_and_parse(args)
+
+    if args.execute_listen:
+        if not is_supported_command(parsed):
+            print("No supported command recognized.", file=sys.stderr)
+            return 2
+        return dispatch(parsed)
+
+    return 0
+
+
+def listen_and_parse(args: argparse.Namespace) -> ParsedCommand:
     with tempfile.TemporaryDirectory(prefix="grimoire-listen-") as tmpdir_name:
         tmpdir = Path(tmpdir_name)
         audio_path = Path(args.audio_file) if args.audio_file else tmpdir / "utterance.wav"
@@ -98,10 +158,7 @@ def listen_once(args: argparse.Namespace) -> int:
         print(f"transcript: {transcript}")
         print(f"parsed: {parsed}")
 
-        if args.execute_listen:
-            return dispatch(parsed)
-
-        return 0
+        return parsed
 
 
 def record_audio(audio_path: Path, seconds: float) -> None:
@@ -239,6 +296,11 @@ def dispatch(parsed: ParsedCommand) -> int:
 
     print(f"Unsupported command: {parsed}", file=sys.stderr)
     return 2
+
+
+def confirm_command(parsed: ParsedCommand) -> bool:
+    answer = input(f"Confirm {parsed.action} {parsed.handle}? [y/N] ")
+    return answer.strip().lower() in {"y", "yes"}
 
 
 def call_shell(method: str, *args: str) -> int:

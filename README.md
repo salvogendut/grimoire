@@ -99,6 +99,17 @@ Record one short microphone utterance and parse it without executing:
 python3 daemon/grimoired.py --listen --record-seconds 3
 ```
 
+Run an Enter-to-record command loop:
+
+```sh
+python3 daemon/grimoired.py --listen-loop --record-seconds 3
+```
+
+In loop mode, press Enter to record one command and type `q` then Enter to
+quit. Non-destructive window commands execute immediately. Destructive commands
+such as `close sparrow` require confirmation. Use `--dry-run` with
+`--listen-loop` to transcribe and parse without executing.
+
 Only execute listened commands when you explicitly opt in:
 
 ```sh

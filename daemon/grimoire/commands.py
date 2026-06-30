@@ -43,6 +43,8 @@ WINDOW_ACTIONS = (
     "unfullscreen",
 )
 
+DESTRUCTIVE_ACTIONS = {"close"}
+
 _STOPWORDS = {"the", "a", "an", "window", "pane", "one"}
 _DICTATION_PREFIXES = ("type", "dictate", "write")
 
@@ -81,6 +83,14 @@ def parse_transcript(transcript: str) -> ParsedCommand:
         return parsed
 
     return ParsedCommand(intent="unknown", text=raw)
+
+
+def is_supported_command(parsed: ParsedCommand) -> bool:
+    return parsed.is_window_command or parsed.intent == "dictate"
+
+
+def requires_confirmation(parsed: ParsedCommand) -> bool:
+    return parsed.is_window_command and parsed.action in DESTRUCTIVE_ACTIONS
 
 
 def _parse_dictation(raw: str) -> str | None:

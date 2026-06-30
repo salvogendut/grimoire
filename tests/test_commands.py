@@ -1,6 +1,10 @@
 from unittest import TestCase
 
-from daemon.grimoire.commands import parse_transcript
+from daemon.grimoire.commands import (
+    is_supported_command,
+    parse_transcript,
+    requires_confirmation,
+)
 
 
 class ParseTranscriptTests(TestCase):
@@ -50,3 +54,15 @@ class ParseTranscriptTests(TestCase):
         parsed = parse_transcript("please do something vague")
 
         self.assertEqual(parsed.intent, "unknown")
+        self.assertFalse(is_supported_command(parsed))
+
+    def test_close_requires_confirmation(self):
+        parsed = parse_transcript("close sparrow")
+
+        self.assertTrue(requires_confirmation(parsed))
+
+    def test_focus_does_not_require_confirmation(self):
+        parsed = parse_transcript("focus sparrow")
+
+        self.assertFalse(requires_confirmation(parsed))
+        self.assertTrue(is_supported_command(parsed))
