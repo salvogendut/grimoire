@@ -107,9 +107,30 @@ currently visible windows.
 
 ### `SetDaemonStatus(b running) -> b`
 
-Updates the GNOME top-bar daemon indicator. The daemon sends `true` repeatedly
-while it is listening and sends `false` on graceful shutdown. The extension also
-expires the active state automatically if heartbeats stop.
+Compatibility method for older daemons. `true` maps to the `idle` daemon state
+and `false` maps to `inactive`.
+
+### `SetDaemonState(s state, s detail) -> b`
+
+Updates the GNOME top-bar daemon indicator with the daemon's current phase. The
+daemon sends the current state immediately on phase changes and repeats it as a
+heartbeat while it is listening. The extension expires the active state
+automatically if heartbeats stop.
+
+Supported states:
+
+- `inactive`
+- `idle`
+- `recording`
+- `transcribing`
+- `parsing`
+- `parsed`
+- `executing`
+- `blocked`
+- `error`
+
+The optional `detail` string is short human-readable context for accessibility
+and debugging, such as the parsed command or error summary.
 
 ### `GetExecutionMode() -> b`
 

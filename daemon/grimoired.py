@@ -48,6 +48,28 @@ WHISPER_MODEL_CANDIDATES = (
 )
 RECORD_RATE = 16000
 DAEMON_STATUS_INTERVAL_SECONDS = 2.0
+DAEMON_STATE_INACTIVE = "inactive"
+DAEMON_STATE_IDLE = "idle"
+DAEMON_STATE_RECORDING = "recording"
+DAEMON_STATE_TRANSCRIBING = "transcribing"
+DAEMON_STATE_PARSING = "parsing"
+DAEMON_STATE_PARSED = "parsed"
+DAEMON_STATE_EXECUTING = "executing"
+DAEMON_STATE_BLOCKED = "blocked"
+DAEMON_STATE_ERROR = "error"
+DAEMON_STATES = {
+    DAEMON_STATE_INACTIVE,
+    DAEMON_STATE_IDLE,
+    DAEMON_STATE_RECORDING,
+    DAEMON_STATE_TRANSCRIBING,
+    DAEMON_STATE_PARSING,
+    DAEMON_STATE_PARSED,
+    DAEMON_STATE_EXECUTING,
+    DAEMON_STATE_BLOCKED,
+    DAEMON_STATE_ERROR,
+}
+MAX_DAEMON_STATUS_DETAIL_LENGTH = 120
+_current_daemon_status: DaemonStatusHeartbeat | None = None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -200,22 +222,35 @@ def listen_loop(args: argparse.Namespace) -> int:
             if prompt.strip().lower() in {"q", "quit", "exit"}:
                 return 0
 
-            parsed = listen_and_parse(args)
+            try:
+                parsed = listen_and_parse(args)
+            except (Exception, SystemExit) as error:
+                set_daemon_state(DAEMON_STATE_ERROR, error)
+                raise
+
             if not is_supported_command(parsed):
+                set_daemon_state(DAEMON_STATE_BLOCKED, "no supported command")
                 print("No supported command recognized.", file=sys.stderr)
                 continue
 
             if args.dry_run:
+                set_daemon_state(DAEMON_STATE_IDLE)
                 continue
 
             if not should_execute_listened_command(args, trace=not args.quiet):
                 continue
 
             if requires_confirmation(parsed) and not confirm_command(parsed):
+                set_daemon_state(DAEMON_STATE_BLOCKED, "confirmation declined")
                 print("skipped")
                 continue
 
-            dispatch(parsed, trace=not args.quiet)
+            set_daemon_state(DAEMON_STATE_EXECUTING, describe_parsed_command(parsed))
+            status = dispatch(parsed, trace=not args.quiet)
+            if status == 0:
+                set_daemon_state(DAEMON_STATE_IDLE)
+            else:
+                set_daemon_state(DAEMON_STATE_ERROR, f"dispatch failed: {status}")
 
 
 def listen_service(args: argparse.Namespace) -> int:
@@ -229,19 +264,31 @@ def listen_service(args: argparse.Namespace) -> int:
     with DaemonStatusHeartbeat():
         try:
             while True:
-                parsed = listen_and_parse(args)
+                try:
+                    parsed = listen_and_parse(args)
+                except (Exception, SystemExit) as error:
+                    set_daemon_state(DAEMON_STATE_ERROR, error)
+                    raise
+
                 if not is_supported_command(parsed):
+                    set_daemon_state(DAEMON_STATE_BLOCKED, "no supported command")
                     print("No supported command recognized.", file=sys.stderr)
                 elif not should_execute_listened_command(args, trace=not args.quiet):
                     continue
                 elif requires_confirmation(parsed):
+                    set_daemon_state(DAEMON_STATE_BLOCKED, "destructive command skipped")
                     print(
                         f"Skipped destructive command in service mode: "
                         f"{parsed.action} {parsed.handle}",
                         file=sys.stderr,
                     )
                 else:
-                    dispatch(parsed, trace=not args.quiet)
+                    set_daemon_state(DAEMON_STATE_EXECUTING, describe_parsed_command(parsed))
+                    status = dispatch(parsed, trace=not args.quiet)
+                    if status == 0:
+                        set_daemon_state(DAEMON_STATE_IDLE)
+                    else:
+                        set_daemon_state(DAEMON_STATE_ERROR, f"dispatch failed: {status}")
 
                 if args.listen_delay:
                     time.sleep(args.listen_delay)
@@ -252,11 +299,17 @@ def listen_service(args: argparse.Namespace) -> int:
 class DaemonStatusHeartbeat:
     def __init__(self, interval: float = DAEMON_STATUS_INTERVAL_SECONDS) -> None:
         self.interval = interval
+        self.state = DAEMON_STATE_IDLE
+        self.detail = ""
+        self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def __enter__(self) -> DaemonStatusHeartbeat:
-        update_daemon_status(True)
+        global _current_daemon_status
+
+        _current_daemon_status = self
+        self.send()
         self._thread = threading.Thread(
             target=self._run,
             name="grimoire-daemon-status",
@@ -266,18 +319,79 @@ class DaemonStatusHeartbeat:
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        global _current_daemon_status
+
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
-        update_daemon_status(False)
+        if exc is not None and exc_type not in {KeyboardInterrupt, EOFError}:
+            self.set_state(DAEMON_STATE_ERROR, format_status_detail(exc))
+        update_daemon_state(DAEMON_STATE_INACTIVE)
+        if _current_daemon_status is self:
+            _current_daemon_status = None
+
+    def set_state(self, state: str, detail: str = "") -> None:
+        with self._lock:
+            self.state = normalize_daemon_state(state)
+            self.detail = format_status_detail(detail)
+
+        self.send()
+
+    def send(self) -> int:
+        with self._lock:
+            state = self.state
+            detail = self.detail
+
+        return update_daemon_state(state, detail)
 
     def _run(self) -> None:
         while not self._stop.wait(self.interval):
-            update_daemon_status(True)
+            self.send()
 
 
 def update_daemon_status(running: bool) -> int:
-    return call_shell_quiet("SetDaemonStatus", "true" if running else "false")
+    return update_daemon_state(
+        DAEMON_STATE_IDLE if running else DAEMON_STATE_INACTIVE,
+    )
+
+
+def update_daemon_state(state: str, detail: str = "") -> int:
+    state = normalize_daemon_state(state)
+    detail = format_status_detail(detail)
+
+    status = call_shell_quiet("SetDaemonState", state, detail)
+    if status == 0:
+        return status
+
+    return call_shell_quiet(
+        "SetDaemonStatus",
+        "false" if state == DAEMON_STATE_INACTIVE else "true",
+    )
+
+
+def set_daemon_state(state: str, detail: str = "") -> None:
+    reporter = _current_daemon_status
+    if reporter is None:
+        update_daemon_state(state, detail)
+        return
+
+    reporter.set_state(state, detail)
+
+
+def normalize_daemon_state(state: str) -> str:
+    normalized = state.strip().lower()
+    if normalized not in DAEMON_STATES:
+        return DAEMON_STATE_ERROR
+
+    return normalized
+
+
+def format_status_detail(detail: object) -> str:
+    text = " ".join(str(detail).strip().split())
+    if len(text) <= MAX_DAEMON_STATUS_DETAIL_LENGTH:
+        return text
+
+    return f"{text[:MAX_DAEMON_STATUS_DETAIL_LENGTH - 3]}..."
 
 
 def should_execute_listened_command(args: argparse.Namespace, trace: bool = True) -> bool:
@@ -287,6 +401,8 @@ def should_execute_listened_command(args: argparse.Namespace, trace: bool = True
     enabled = execution_mode_enabled()
     if trace and not enabled:
         print("execution disabled; click the Grimoire top-bar icon or press Ctrl+Alt+Space to arm")
+    if not enabled:
+        set_daemon_state(DAEMON_STATE_BLOCKED, "execution disabled")
 
     return enabled
 
@@ -315,15 +431,31 @@ def set_execution_mode(enabled: bool) -> int:
 
 
 def listen_once(args: argparse.Namespace) -> int:
-    parsed = listen_and_parse(args)
+    with DaemonStatusHeartbeat():
+        try:
+            parsed = listen_and_parse(args)
+        except (Exception, SystemExit) as error:
+            set_daemon_state(DAEMON_STATE_ERROR, error)
+            raise
 
-    if args.execute_listen:
-        if not is_supported_command(parsed):
-            print("No supported command recognized.", file=sys.stderr)
-            return 2
-        return dispatch(parsed, trace=not args.quiet)
+        if args.execute_listen:
+            if not is_supported_command(parsed):
+                set_daemon_state(DAEMON_STATE_BLOCKED, "no supported command")
+                print("No supported command recognized.", file=sys.stderr)
+                return 2
+            if not should_execute_listened_command(args, trace=not args.quiet):
+                return 0
 
-    return 0
+            set_daemon_state(DAEMON_STATE_EXECUTING, describe_parsed_command(parsed))
+            status = dispatch(parsed, trace=not args.quiet)
+            if status == 0:
+                set_daemon_state(DAEMON_STATE_IDLE)
+            else:
+                set_daemon_state(DAEMON_STATE_ERROR, f"dispatch failed: {status}")
+            return status
+
+        set_daemon_state(DAEMON_STATE_IDLE)
+        return 0
 
 
 def listen_and_parse(args: argparse.Namespace) -> ParsedCommand:
@@ -332,10 +464,14 @@ def listen_and_parse(args: argparse.Namespace) -> ParsedCommand:
         audio_path = Path(args.audio_file) if args.audio_file else tmpdir / "utterance.wav"
 
         if not args.audio_file:
+            set_daemon_state(DAEMON_STATE_RECORDING, f"{args.record_seconds:.1f}s")
             record_audio(audio_path, args.record_seconds)
 
+        set_daemon_state(DAEMON_STATE_TRANSCRIBING, audio_path.name)
         transcript = transcribe_audio(audio_path, tmpdir, args.asr_command)
+        set_daemon_state(DAEMON_STATE_PARSING, transcript)
         parsed = parse_transcript(transcript)
+        set_daemon_state(DAEMON_STATE_PARSED, describe_parsed_command(parsed))
 
         if not args.quiet:
             trace_recognition(transcript, parsed)

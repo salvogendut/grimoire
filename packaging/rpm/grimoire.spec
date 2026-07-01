@@ -1,6 +1,6 @@
 Name:           grimoire
 Version:        0.1.0
-Release:        3%{?dist}
+Release:        4%{?dist}
 Summary:        GNOME voice-control handles and daemon
 
 # TODO: choose the project license before publishing this package.
@@ -58,6 +58,9 @@ such as focus, maximize, open application, and dictation over the session bus.
 %{_userunitdir}/grimoired.service
 
 %changelog
+* Wed Jul 01 2026 Salvo Gendut <salvogendut@users.noreply.github.com> - 0.1.0-4
+- Add real-time daemon phase reporting to the top-bar indicator.
+
 * Wed Jul 01 2026 Salvo Gendut <salvogendut@users.noreply.github.com> - 0.1.0-3
 - Add keyboard, command-line, and Makefile controls for the execution gate.
 

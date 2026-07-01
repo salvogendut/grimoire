@@ -188,8 +188,14 @@ heartbeat to the GNOME Shell extension. The top-bar icon shows the current
 state:
 
 - Gray: daemon inactive.
-- Yellow: daemon listening, execution disabled.
-- Green: daemon listening and armed for execution.
+- `OFF` in yellow: daemon idle or blocked with execution disabled.
+- `ON` in green: daemon idle and armed for execution.
+- `REC` in red: recording from the microphone.
+- `ASR` in blue: transcribing with the speech recognizer.
+- `PAR` in cyan: parsing the transcript.
+- `OK` in green: a command was recognized.
+- `RUN` in green: executing a command.
+- `ERR` in red: an error occurred.
 
 Click the icon, or press `Ctrl+Alt+Space`, to toggle between yellow and green.
 The daemon checks this armed state immediately before dispatching a listened

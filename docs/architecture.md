@@ -31,7 +31,8 @@ Responsibilities:
 
 - Track manageable `Meta.Window` instances.
 - Draw one colored frame and bird-name tab per tracked window.
-- Show a top-bar daemon status indicator based on daemon heartbeats.
+- Show a top-bar daemon status indicator based on daemon phase updates and
+  heartbeats.
 - Let the top-bar indicator or keyboard shortcut arm or disarm listened command
   execution.
 - Maintain a handle-to-window registry.
@@ -61,8 +62,9 @@ Responsibilities:
 - Run voice activity detection and speech recognition.
 - Convert transcripts into structured intents.
 - Call the extension over DBus.
-- Send a heartbeat while listening so the shell indicator can show whether the
-  daemon is currently running.
+- Send phase updates while listening so the shell indicator can show whether
+  the daemon is idle, recording, transcribing, parsing, executing, blocked, or
+  in error.
 - Check the shell-owned execution gate before dispatching any continuously
   listened command.
 - Eventually manage wake word or push-to-talk activation.

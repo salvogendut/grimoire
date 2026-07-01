@@ -32,3 +32,9 @@
   font-weight: 800;
   text-align: center;
 }
+
+.grimoire-daemon-status-label {
+  font-size: 9px;
+  font-weight: 800;
+  padding-left: 4px;
+}

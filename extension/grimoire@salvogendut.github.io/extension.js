@@ -60,6 +60,11 @@ const DBUS_XML = `
       <arg type="b" name="running" direction="in"/>
       <arg type="b" name="ok" direction="out"/>
     </method>
+    <method name="SetDaemonState">
+      <arg type="s" name="state" direction="in"/>
+      <arg type="s" name="detail" direction="in"/>
+      <arg type="b" name="ok" direction="out"/>
+    </method>
     <method name="GetExecutionMode">
       <arg type="b" name="enabled" direction="out"/>
     </method>
@@ -85,6 +90,30 @@ const DAEMON_HEARTBEAT_TIMEOUT_MS = 6000;
 const DAEMON_WATCH_INTERVAL_SECONDS = 2;
 const TOGGLE_EXECUTION_KEYBINDING = 'toggle-execution';
 const KEY_PAUSE_MS = 15;
+
+const DAEMON_STATES = new Set([
+    'inactive',
+    'idle',
+    'recording',
+    'transcribing',
+    'parsing',
+    'parsed',
+    'executing',
+    'blocked',
+    'error',
+]);
+
+const DAEMON_STATE_DISPLAY = {
+    inactive: {iconColor: '#8b8e91', label: '', accessible: 'inactive'},
+    idle: {iconColor: '#f6d32d', label: 'OFF', accessible: 'idle'},
+    recording: {iconColor: '#ff5c5c', label: 'REC', accessible: 'recording'},
+    transcribing: {iconColor: '#78aeed', label: 'ASR', accessible: 'transcribing'},
+    parsing: {iconColor: '#62d0c8', label: 'PAR', accessible: 'parsing'},
+    parsed: {iconColor: '#8ff0a4', label: 'OK', accessible: 'parsed command'},
+    executing: {iconColor: '#57e389', label: 'RUN', accessible: 'executing command'},
+    blocked: {iconColor: '#f6d32d', label: 'OFF', accessible: 'blocked'},
+    error: {iconColor: '#ff5c5c', label: 'ERR', accessible: 'error'},
+};
 
 const PALETTE = [
     {name: 'yellow', hex: '#f2c94c'},
@@ -185,51 +214,73 @@ class GrimoireDaemonIndicator extends PanelMenu.Button {
 
         this._running = false;
         this._executionEnabled = false;
+        this._daemonState = 'inactive';
+        this._detail = '';
         this._onToggleExecution = onToggleExecution;
         this._icon = new St.Icon({
             icon_name: 'audio-input-microphone-symbolic',
             style_class: 'system-status-icon',
         });
+        this._statusLabel = new St.Label({
+            style_class: 'grimoire-daemon-status-label',
+            text: '',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
         this.add_child(this._icon);
+        this.add_child(this._statusLabel);
         this.connect('button-press-event', () => {
             this._onToggleExecution();
             return Clutter.EVENT_STOP;
         });
-        this.setState(false, false);
+        this.setState(false, false, 'inactive', '');
     }
 
     setRunning(running) {
-        this.setState(running, this._executionEnabled);
+        this.setState(running, this._executionEnabled, running ? this._daemonState : 'inactive', '');
     }
 
     setExecutionEnabled(enabled) {
-        this.setState(this._running, enabled);
+        this.setState(this._running, enabled, this._daemonState, this._detail);
     }
 
-    setState(running, executionEnabled) {
+    setDaemonState(state, detail) {
+        this.setState(state !== 'inactive', this._executionEnabled, state, detail);
+    }
+
+    setState(running, executionEnabled, state, detail) {
         this._running = running;
         this._executionEnabled = executionEnabled && running;
+        this._daemonState = running ? state : 'inactive';
+        this._detail = detail;
 
-        if (!running)
-            this._icon.set_style('color: #8b8e91;');
-        else if (this._executionEnabled)
-            this._icon.set_style('color: #57e389;');
-        else
-            this._icon.set_style('color: #f6d32d;');
+        const display = this._display();
+        this._icon.set_style(`color: ${display.iconColor};`);
+        this._statusLabel.set_style(`color: ${display.iconColor};`);
+        this._statusLabel.set_text(display.label);
 
         this.opacity = running ? 255 : 160;
         this.set_accessible_name(
             this._accessibleName());
     }
 
+    _display() {
+        const base = DAEMON_STATE_DISPLAY[this._daemonState] ?? DAEMON_STATE_DISPLAY.idle;
+
+        if (this._daemonState === 'idle' && this._executionEnabled)
+            return {...base, iconColor: '#57e389', label: 'ON'};
+
+        return base;
+    }
+
     _accessibleName() {
         if (!this._running)
             return 'Grimoire daemon inactive';
 
-        if (this._executionEnabled)
-            return 'Grimoire daemon armed';
+        const display = this._display();
+        const gate = this._executionEnabled ? 'armed' : 'execution disabled';
+        const detail = this._detail ? `: ${this._detail}` : '';
 
-        return 'Grimoire daemon listening, execution disabled';
+        return `Grimoire daemon ${display.accessible}, ${gate}${detail}`;
     }
 }
 
@@ -244,6 +295,8 @@ export default class GrimoireExtension extends Extension {
         this._daemonLastSeen = 0;
         this._daemonMonitorId = 0;
         this._daemonRunning = false;
+        this._daemonState = 'inactive';
+        this._daemonDetail = '';
         this._executionEnabled = false;
         this._indicator = new GrimoireDaemonIndicator(
             () => this._toggleExecutionMode());
@@ -289,6 +342,8 @@ export default class GrimoireExtension extends Extension {
         this._records = null;
         this._handleMemory = null;
         this._daemonLastSeen = 0;
+        this._daemonState = 'inactive';
+        this._daemonDetail = '';
         this._executionEnabled = false;
     }
 
@@ -387,14 +442,16 @@ export default class GrimoireExtension extends Extension {
     }
 
     SetDaemonStatus(running) {
-        if (running) {
-            this._daemonLastSeen = Date.now();
-            this._setDaemonRunning(true);
-        } else {
-            this._daemonLastSeen = 0;
-            this._setDaemonRunning(false);
-            this._setExecutionEnabled(false);
-        }
+        this._setDaemonState(running ? 'idle' : 'inactive', '');
+
+        return true;
+    }
+
+    SetDaemonState(state, detail) {
+        if (!DAEMON_STATES.has(state))
+            return false;
+
+        this._setDaemonState(state, detail);
 
         return true;
     }
@@ -418,8 +475,7 @@ export default class GrimoireExtension extends Extension {
                     this._daemonLastSeen &&
                     Date.now() - this._daemonLastSeen > DAEMON_HEARTBEAT_TIMEOUT_MS
                 ) {
-                    this._setDaemonRunning(false);
-                    this._setExecutionEnabled(false);
+                    this._setDaemonState('inactive', '');
                 }
 
                 return GLib.SOURCE_CONTINUE;
@@ -436,7 +492,13 @@ export default class GrimoireExtension extends Extension {
 
     _setDaemonRunning(running) {
         this._daemonRunning = running;
-        this._indicator?.setState(running, this._executionEnabled);
+        this._daemonState = running ? this._daemonState : 'inactive';
+        this._daemonDetail = running ? this._daemonDetail : '';
+        this._indicator?.setState(
+            running,
+            this._executionEnabled,
+            this._daemonState,
+            this._daemonDetail);
     }
 
     _setExecutionEnabled(enabled) {
@@ -451,6 +513,26 @@ export default class GrimoireExtension extends Extension {
         }
 
         this._setExecutionEnabled(!this._executionEnabled);
+    }
+
+    _setDaemonState(state, detail) {
+        const running = state !== 'inactive';
+        this._daemonRunning = running;
+        this._daemonState = running ? state : 'inactive';
+        this._daemonDetail = running ? `${detail ?? ''}`.trim() : '';
+
+        if (running)
+            this._daemonLastSeen = Date.now();
+        else {
+            this._daemonLastSeen = 0;
+            this._setExecutionEnabled(false);
+        }
+
+        this._indicator?.setState(
+            running,
+            this._executionEnabled,
+            this._daemonState,
+            this._daemonDetail);
     }
 
     _addKeybindings() {

@@ -366,14 +366,46 @@ class RuntimeConfigTests(TestCase):
             status = grimoired.update_daemon_status(True)
 
         self.assertEqual(status, 0)
-        call_shell.assert_called_once_with("SetDaemonStatus", "true")
+        call_shell.assert_called_once_with("SetDaemonState", "idle", "")
 
     def test_update_daemon_status_false(self):
         with patch.object(grimoired, "call_shell_quiet", return_value=0) as call_shell:
             status = grimoired.update_daemon_status(False)
 
         self.assertEqual(status, 0)
-        call_shell.assert_called_once_with("SetDaemonStatus", "false")
+        call_shell.assert_called_once_with("SetDaemonState", "inactive", "")
+
+    def test_update_daemon_state_falls_back_to_boolean_status(self):
+        with patch.object(grimoired, "call_shell_quiet", side_effect=[1, 0]) as call_shell:
+            status = grimoired.update_daemon_state("recording", "3.0s")
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            call_shell.mock_calls,
+            [
+                call("SetDaemonState", "recording", "3.0s"),
+                call("SetDaemonStatus", "true"),
+            ],
+        )
+
+    def test_update_daemon_state_falls_back_to_inactive_status(self):
+        with patch.object(grimoired, "call_shell_quiet", side_effect=[1, 0]) as call_shell:
+            status = grimoired.update_daemon_state("inactive")
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            call_shell.mock_calls,
+            [
+                call("SetDaemonState", "inactive", ""),
+                call("SetDaemonStatus", "false"),
+            ],
+        )
+
+    def test_format_status_detail_trims_whitespace(self):
+        self.assertEqual(
+            grimoired.format_status_detail("  focus   dove  "),
+            "focus dove",
+        )
 
     def test_configured_path_prefers_environment(self):
         with patch.dict(grimoired.os.environ, {"GRIMOIRE_TEST_PATH": "/tmp/custom-tool"}):
@@ -432,7 +464,28 @@ class RuntimeConfigTests(TestCase):
         args = grimoired.argparse.Namespace(dry_run=False, execute_listen=True)
 
         with patch.object(grimoired, "execution_mode_enabled", return_value=False):
-            self.assertFalse(grimoired.should_execute_listened_command(args, trace=False))
+            with patch.object(grimoired, "set_daemon_state") as set_state:
+                self.assertFalse(grimoired.should_execute_listened_command(args, trace=False))
+
+        set_state.assert_called_once_with("blocked", "execution disabled")
+
+    def test_listen_once_execute_requires_shell_gate(self):
+        args = grimoired.argparse.Namespace(execute_listen=True, quiet=True)
+        parsed = ParsedCommand(intent="window", action="focus", handle="dove")
+
+        with patch.object(grimoired, "update_daemon_state", return_value=0):
+            with patch.object(grimoired, "listen_and_parse", return_value=parsed):
+                with patch.object(
+                    grimoired,
+                    "should_execute_listened_command",
+                    return_value=False,
+                ) as should_execute:
+                    with patch.object(grimoired, "dispatch") as dispatch:
+                        status = grimoired.listen_once(args)
+
+        self.assertEqual(status, 0)
+        should_execute.assert_called_once_with(args, trace=False)
+        dispatch.assert_not_called()
 
     def test_should_execute_when_armed(self):
         args = grimoired.argparse.Namespace(dry_run=False, execute_listen=True)
