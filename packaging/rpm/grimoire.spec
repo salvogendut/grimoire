@@ -1,6 +1,6 @@
 Name:           grimoire
 Version:        0.1.0
-Release:        6%{?dist}
+Release:        7%{?dist}
 Summary:        GNOME voice-control handles and daemon
 
 # TODO: choose the project license before publishing this package.
@@ -48,6 +48,8 @@ such as focus, maximize, open application, and dictation over the session bus.
 
 %files
 %doc README.md docs/architecture.md docs/protocol.md
+%dir %{_datadir}/grimoire
+%{_datadir}/grimoire/grimoired.env.example
 %dir %{_libexecdir}/grimoire
 %dir %{_libexecdir}/grimoire/grimoire
 %{_bindir}/grimoired
@@ -58,6 +60,9 @@ such as focus, maximize, open application, and dictation over the session bus.
 %{_userunitdir}/grimoired.service
 
 %changelog
+* Wed Jul 01 2026 Salvo Gendut <salvogendut@users.noreply.github.com> - 0.1.0-7
+- Install an example service environment file and make daemon args configurable.
+
 * Wed Jul 01 2026 Salvo Gendut <salvogendut@users.noreply.github.com> - 0.1.0-6
 - Add an opt-in AI interpreter layer for command normalization.
 

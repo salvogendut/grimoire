@@ -11,10 +11,11 @@ LIBEXECDIR ?= $(PREFIX)/libexec/grimoire
 DATADIR ?= $(PREFIX)/share
 SYSTEMD_USER_UNIT_DIR ?= $(PREFIX)/lib/systemd/user
 GNOME_EXTENSION_DIR ?= $(DATADIR)/gnome-shell/extensions/$(EXTENSION_UUID)
+GRIMOIRE_DATADIR ?= $(DATADIR)/grimoire
 
 .PHONY: compile-extension-schemas install install-extension enable-extension disable-extension list-windows dry-focus-yellow \
-	arm-execution disarm-execution execution-mode start-daemon stop-daemon restart-daemon \
-	status-daemon logs-daemon check-asr check-ai test dist rpm
+	arm-execution disarm-execution execution-mode install-user-env reload-daemon start-daemon \
+	stop-daemon restart-daemon status-daemon logs-daemon check-asr check-ai test dist rpm
 
 compile-extension-schemas:
 	glib-compile-schemas "$(EXTENSION_SOURCE)/schemas"
@@ -52,6 +53,14 @@ check-asr:
 check-ai:
 	python3 daemon/grimoired.py --check-ai
 
+install-user-env:
+	install -d "$(HOME)/.config/grimoire"
+	test -f "$(HOME)/.config/grimoire/grimoired.env" || install -m 0600 packaging/systemd/grimoired.env.example "$(HOME)/.config/grimoire/grimoired.env"
+	@echo "User service environment: $(HOME)/.config/grimoire/grimoired.env"
+
+reload-daemon:
+	systemctl --user daemon-reload
+
 start-daemon:
 	systemctl --user start grimoired.service
 
@@ -76,10 +85,12 @@ install:
 	install -d "$(DESTDIR)$(GNOME_EXTENSION_DIR)"
 	install -d "$(DESTDIR)$(GNOME_EXTENSION_DIR)/schemas"
 	install -d "$(DESTDIR)$(SYSTEMD_USER_UNIT_DIR)"
+	install -d "$(DESTDIR)$(GRIMOIRE_DATADIR)"
 	install -m 0755 daemon/grimoired.py "$(DESTDIR)$(LIBEXECDIR)/grimoired.py"
 	install -m 0644 daemon/grimoire/__init__.py daemon/grimoire/commands.py "$(DESTDIR)$(LIBEXECDIR)/grimoire/"
 	install -m 0644 "$(EXTENSION_SOURCE)/extension.js" "$(EXTENSION_SOURCE)/metadata.json" "$(EXTENSION_SOURCE)/stylesheet.css" "$(DESTDIR)$(GNOME_EXTENSION_DIR)/"
 	install -m 0644 "$(EXTENSION_SCHEMA)" "$(DESTDIR)$(GNOME_EXTENSION_DIR)/schemas/"
+	install -m 0644 packaging/systemd/grimoired.env.example "$(DESTDIR)$(GRIMOIRE_DATADIR)/"
 	glib-compile-schemas "$(DESTDIR)$(GNOME_EXTENSION_DIR)/schemas"
 	sed "s|@LIBEXECDIR@|$(LIBEXECDIR)|g" packaging/bin/grimoired.in > "$(DESTDIR)$(BINDIR)/grimoired"
 	chmod 0755 "$(DESTDIR)$(BINDIR)/grimoired"

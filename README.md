@@ -227,6 +227,8 @@ gsettings \
 When installed as a user service, common service controls are available:
 
 ```sh
+make install-user-env
+make reload-daemon
 make start-daemon
 make stop-daemon
 make status-daemon
@@ -286,21 +288,42 @@ must receive the transcript in readable form to interpret it. Grimoire sends
 only minimal context by default: transcript, allowed actions, allowed handles,
 and deterministic parser output. It does not send screenshots or window titles.
 
-For service installs, put recognizer overrides in:
+For service installs, put recognizer, AI, and service argument overrides in:
 
 ```text
 ~/.config/grimoire/grimoired.env
 ```
 
-Example:
+The RPM installs an example at:
+
+```text
+/usr/share/grimoire/grimoired.env.example
+```
+
+Create your user config from it:
 
 ```sh
+mkdir -p ~/.config/grimoire
+cp /usr/share/grimoire/grimoired.env.example ~/.config/grimoire/grimoired.env
+```
+
+Example values:
+
+```sh
+GRIMOIRE_DAEMON_ARGS="--listen-service --execute-listen --record-seconds 3"
 GRIMOIRE_WHISPER_CLI=/usr/bin/whisper-cli
 GRIMOIRE_WHISPER_MODEL=/home/salvogendut/.local/share/grimoire/models/ggml-base.en.bin
 GRIMOIRE_AI_PROVIDER=openai
 OPENAI_API_KEY=...
 GRIMOIRE_AI_MODE=fallback
 GRIMOIRE_OPENAI_MODEL=gpt-4o-mini
+```
+
+After editing the file, reload and restart the user service:
+
+```sh
+systemctl --user daemon-reload
+systemctl --user restart grimoired.service
 ```
 
 ## Packaging
