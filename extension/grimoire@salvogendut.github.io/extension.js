@@ -53,11 +53,16 @@ const DBUS_XML = `
   </interface>
 </node>`;
 
-const TAB_WIDTH = 34;
-const TAB_MIN_HEIGHT = 92;
-const TAB_LETTER_HEIGHT = 13;
-const TAB_HEADER_OFFSET = 36;
-const TAB_LEFT_INSET = 16;
+const FRAME_BORDER_WIDTH = 6;
+const VERTICAL_TAB_WIDTH = 34;
+const VERTICAL_TAB_MIN_HEIGHT = 92;
+const VERTICAL_TAB_LETTER_HEIGHT = 13;
+const VERTICAL_TAB_HEADER_OFFSET = 36;
+const VERTICAL_TAB_LEFT_INSET = 16;
+const HORIZONTAL_TAB_HEIGHT = 34;
+const HORIZONTAL_TAB_MIN_WIDTH = 116;
+const HORIZONTAL_TAB_LETTER_WIDTH = 11;
+const HORIZONTAL_TAB_RIGHT_INSET = 0;
 const KEY_PAUSE_MS = 15;
 
 const PALETTE = [
@@ -334,28 +339,59 @@ export default class GrimoireExtension extends Extension {
             reactive: false,
             visible: false,
         });
-        const tab = new St.BoxLayout({
-            style_class: 'grimoire-tab',
+        const frame = new St.Widget({
+            style_class: 'grimoire-frame',
+            reactive: false,
+        });
+        const verticalTab = new St.BoxLayout({
+            style_class: 'grimoire-tab grimoire-tab-vertical',
             vertical: true,
             reactive: false,
         });
+        const horizontalTab = new St.BoxLayout({
+            style_class: 'grimoire-tab grimoire-tab-horizontal',
+            reactive: false,
+        });
+        const tabStyle = `background-color: ${color.hex}; color: ${contrastForColor(color.name)};`;
 
-        tab.set_style(`background-color: ${color.hex}; color: ${contrastForColor(color.name)};`);
+        frame.set_style(`border: ${FRAME_BORDER_WIDTH}px solid ${color.hex};`);
+        verticalTab.set_style(tabStyle);
+        horizontalTab.set_style(tabStyle);
 
         for (const letter of bird.name.toUpperCase()) {
             const label = new St.Label({
                 text: letter,
-                style_class: 'grimoire-tab-letter',
+                style_class: 'grimoire-tab-vertical-letter',
                 x_align: Clutter.ActorAlign.CENTER,
             });
-            label.set_width(TAB_WIDTH);
-            label.set_height(TAB_LETTER_HEIGHT);
-            tab.add_child(label);
+            label.set_width(VERTICAL_TAB_WIDTH);
+            label.set_height(VERTICAL_TAB_LETTER_HEIGHT);
+            verticalTab.add_child(label);
         }
 
-        marker.add_child(tab);
+        horizontalTab.add_child(new St.Label({
+            text: bird.name.toUpperCase(),
+            style_class: 'grimoire-tab-horizontal-label',
+            x_expand: true,
+            y_expand: true,
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
 
-        this._records.set(window, {window, actor, color, bird, marker, tab});
+        marker.add_child(frame);
+        marker.add_child(verticalTab);
+        marker.add_child(horizontalTab);
+
+        this._records.set(window, {
+            window,
+            actor,
+            color,
+            bird,
+            marker,
+            frame,
+            verticalTab,
+            horizontalTab,
+        });
         this._attachMarker(window);
 
         window.connectObject(
@@ -429,23 +465,77 @@ export default class GrimoireExtension extends Extension {
 
         const [actorX, actorY] = actor.get_position();
         const [actorWidth, actorHeight] = actor.get_size();
+        if (actorWidth <= 0 || actorHeight <= 0) {
+            record.marker.hide();
+            return;
+        }
+
         const frameRect = window.get_frame_rect();
-        const markerWidth = Math.round(Math.max(1, Math.min(TAB_WIDTH, actorWidth)));
-        const localX = frameRect.x - actorX + TAB_LEFT_INSET;
-        const localY = frameRect.y - actorY + TAB_HEADER_OFFSET;
-        const x = Math.round(Math.max(0, Math.min(localX, actorWidth - markerWidth)));
+        const frameX = Math.round(Math.max(0, frameRect.x - actorX));
+        const frameY = Math.round(Math.max(0, frameRect.y - actorY));
+        const frameWidth = Math.round(Math.max(
+            1,
+            Math.min(frameRect.width, actorWidth - frameX)));
+        const frameHeight = Math.round(Math.max(
+            1,
+            Math.min(frameRect.height, actorHeight - frameY)));
+
+        this._attachMarker(window);
+        record.marker.set_position(0, 0);
+        record.marker.set_size(actorWidth, actorHeight);
+        record.frame.set_position(frameX, frameY);
+        record.frame.set_size(frameWidth, frameHeight);
+
+        if (this._isMaximized(window))
+            this._syncVerticalTab(record, frameX, frameY, actorWidth, actorHeight);
+        else
+            this._syncHorizontalTab(record, frameX, frameY, frameWidth, actorWidth);
+
+        record.marker.show();
+        actor.set_child_above_sibling(record.marker, null);
+    }
+
+    _syncHorizontalTab(record, frameX, frameY, frameWidth, actorWidth) {
+        record.verticalTab.hide();
+
+        const tabWidth = Math.round(Math.max(
+            HORIZONTAL_TAB_MIN_WIDTH,
+            record.bird.name.length * HORIZONTAL_TAB_LETTER_WIDTH + 38));
+        const maxX = Math.max(0, actorWidth - tabWidth);
+        const targetX = frameX + frameWidth - tabWidth - HORIZONTAL_TAB_RIGHT_INSET;
+        const x = Math.round(Math.max(0, Math.min(targetX, maxX)));
+        const y = Math.round(Math.max(0, frameY - HORIZONTAL_TAB_HEIGHT));
+
+        record.horizontalTab.set_position(x, y);
+        record.horizontalTab.set_size(tabWidth, HORIZONTAL_TAB_HEIGHT);
+        record.horizontalTab.show();
+    }
+
+    _syncVerticalTab(record, frameX, frameY, actorWidth, actorHeight) {
+        record.horizontalTab.hide();
+
+        const tabWidth = Math.round(Math.max(1, Math.min(VERTICAL_TAB_WIDTH, actorWidth)));
+        const localX = frameX + VERTICAL_TAB_LEFT_INSET;
+        const localY = frameY + VERTICAL_TAB_HEADER_OFFSET;
+        const x = Math.round(Math.max(0, Math.min(localX, actorWidth - tabWidth)));
         const y = Math.round(Math.max(0, Math.min(localY, actorHeight - 1)));
         const tabHeight = Math.round(Math.min(
             Math.max(1, actorHeight - y),
-            Math.max(TAB_MIN_HEIGHT, record.bird.name.length * TAB_LETTER_HEIGHT + 14)));
+            Math.max(
+                VERTICAL_TAB_MIN_HEIGHT,
+                record.bird.name.length * VERTICAL_TAB_LETTER_HEIGHT + 14)));
 
-        this._attachMarker(window);
-        record.marker.set_position(x, y);
-        record.marker.set_size(markerWidth, tabHeight);
-        record.tab.set_position(0, 0);
-        record.tab.set_size(markerWidth, tabHeight);
-        record.marker.show();
-        actor.set_child_above_sibling(record.marker, null);
+        record.verticalTab.set_position(x, y);
+        record.verticalTab.set_size(tabWidth, tabHeight);
+        record.verticalTab.show();
+    }
+
+    _isMaximized(window) {
+        const maximized = safeCall(window, 'get_maximized', 0);
+        if (typeof maximized === 'number')
+            return maximized !== 0;
+
+        return Boolean(maximized);
     }
 
     _attachMarker(window) {

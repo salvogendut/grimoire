@@ -2,14 +2,33 @@
   border-radius: 0;
 }
 
+.grimoire-frame {
+  border-radius: 0;
+  background-color: transparent;
+}
+
 .grimoire-tab {
-  border-radius: 4px;
-  padding-top: 7px;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.36);
 }
 
-.grimoire-tab-letter {
+.grimoire-tab-vertical {
+  border-radius: 4px;
+  padding-top: 7px;
+}
+
+.grimoire-tab-vertical-letter {
   font-size: 10px;
   font-weight: 700;
+  text-align: center;
+}
+
+.grimoire-tab-horizontal {
+  border-radius: 0;
+  padding: 0 14px;
+}
+
+.grimoire-tab-horizontal-label {
+  font-size: 11px;
+  font-weight: 800;
   text-align: center;
 }
