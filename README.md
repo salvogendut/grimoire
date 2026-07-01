@@ -231,8 +231,11 @@ gnome-extensions enable grimoire@salvogendut.github.io
 systemctl --user enable --now grimoired.service
 ```
 
-The service is intentionally not enabled by default. It needs a working local
-recognizer and microphone path first.
+The service is intentionally not enabled by default. It also starts in
+parse-only mode, so it can prove the microphone, recognizer, heartbeat, and
+status icon path without executing background speech. Use the manual
+`--listen-loop --execute-listen` path for command execution until Grimoire has a
+wake word or push-to-talk gate.
 
 ## Design Direction
 
