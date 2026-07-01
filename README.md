@@ -17,7 +17,8 @@ type make test
 
 The current prototype covers focus/window management by color or bird handle,
 application launching, and clipboard-paste dictation with terminal-aware Enter
-handling.
+handling. Window handles are remembered by app/title where possible, so a
+reopened window can keep the same bird/color if that handle is still available.
 
 ## Screenshots
 
@@ -101,6 +102,12 @@ Ask for the current visible handles or launchable applications:
 ```sh
 python3 daemon/grimoired.py --command "list windows"
 python3 daemon/grimoired.py --command "show apps"
+```
+
+Deliberately clear remembered handle assignments and reassign current windows:
+
+```sh
+python3 daemon/grimoired.py --command "refresh handles"
 ```
 
 Run the current tests:

@@ -343,6 +343,10 @@ def dispatch(parsed: ParsedCommand, trace: bool = True) -> int:
         assert parsed.action is not None
         return dispatch_inventory(parsed.action, trace=trace)
 
+    if parsed.is_handle_command:
+        assert parsed.action is not None
+        return dispatch_handle_action(parsed.action, trace=trace)
+
     if parsed.intent == "dictate":
         assert parsed.text is not None
         if parsed.handle is not None:
@@ -407,6 +411,14 @@ def dispatch_inventory(action: str, trace: bool = True) -> int:
     return 2
 
 
+def dispatch_handle_action(action: str, trace: bool = True) -> int:
+    if action == "refresh":
+        return run_shell_action("refresh handles", "RefreshHandles", trace=trace)
+
+    print(f"Unsupported handle action: {action}", file=sys.stderr)
+    return 2
+
+
 def call_shell_json(method: str, *args: str) -> tuple[int, list[dict[str, object]]]:
     result = run_gdbus(method, *args)
     if result.stderr:
@@ -453,8 +465,10 @@ def format_windows(windows: list[dict[str, object]]) -> str:
         title = clean_field(window.get("title"), "untitled")
         wm_class = clean_field(window.get("wm_class"), "")
         focused = " focused" if window.get("focused") else ""
+        source = clean_field(window.get("handle_source"), "")
+        source_text = f" {source}" if source else ""
         suffix = f" [{wm_class}]" if wm_class else ""
-        lines.append(f"- {bird}/{color}{focused}: {title}{suffix}")
+        lines.append(f"- {bird}/{color}{focused}{source_text}: {title}{suffix}")
 
     return "\n".join(lines)
 
@@ -498,6 +512,9 @@ def describe_parsed_command(parsed: ParsedCommand) -> str:
 
     if parsed.is_inventory_command:
         return f"inventory action={parsed.action}"
+
+    if parsed.is_handle_command:
+        return f"handles action={parsed.action}"
 
     if parsed.intent == "dictate":
         target = parsed.handle if parsed.handle is not None else "focused"

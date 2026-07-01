@@ -26,7 +26,8 @@ Example payload:
     "wm_class": "org.gnome.Terminal",
     "pid": 1234,
     "stable_sequence": 42,
-    "focused": true
+    "focused": true,
+    "handle_source": "remembered"
   }
 ]
 ```
@@ -97,7 +98,12 @@ Supported commands in the first scaffold:
 
 ### `Refresh() -> b`
 
-Forces the extension to rescan windows and reposition sidebars.
+Forces the extension to rescan windows and reposition frames.
+
+### `RefreshHandles() -> b`
+
+Clears remembered handle assignments and deliberately reassigns handles for the
+currently visible windows.
 
 ## Signals
 

@@ -48,6 +48,7 @@ APP_ACTIONS = ("open", "launch", "start")
 INVENTORY_WINDOW_WORDS = {"window", "windows", "handle", "handles"}
 INVENTORY_APP_WORDS = {"app", "apps", "application", "applications", "program", "programs"}
 INVENTORY_ACTION_WORDS = {"list", "show", "what", "which"}
+HANDLE_REFRESH_WORDS = {"refresh", "reset", "reassign", "shuffle"}
 
 ACTION_ALIASES = {
     "maximized": "maximize",
@@ -142,6 +143,10 @@ class ParsedCommand:
         return self.intent == "inventory"
 
     @property
+    def is_handle_command(self) -> bool:
+        return self.intent == "handles"
+
+    @property
     def color(self) -> str | None:
         return self.handle
 
@@ -174,6 +179,10 @@ def parse_transcript(transcript: str) -> ParsedCommand:
     if parsed is not None:
         return parsed
 
+    parsed = _parse_handle_action(tokens)
+    if parsed is not None:
+        return parsed
+
     parsed = _parse_app_action(tokens)
     if parsed is not None:
         return parsed
@@ -186,6 +195,7 @@ def is_supported_command(parsed: ParsedCommand) -> bool:
         parsed.is_window_command or
         parsed.is_app_command or
         parsed.is_inventory_command or
+        parsed.is_handle_command or
         parsed.intent == "dictate"
     )
 
@@ -294,6 +304,20 @@ def _parse_action_handle(tokens: list[str]) -> ParsedCommand | None:
 
     if first in HANDLE_NAMES and second in WINDOW_ACTIONS:
         return ParsedCommand(intent="window", action=second, handle=first)
+
+    return None
+
+
+def _parse_handle_action(tokens: list[str]) -> ParsedCommand | None:
+    if len(tokens) < 2:
+        return None
+
+    first, second = tokens[0], tokens[1]
+    if first in HANDLE_REFRESH_WORDS and second in {"handle", "handles"}:
+        return ParsedCommand(intent="handles", action="refresh")
+
+    if first in {"handle", "handles"} and second in HANDLE_REFRESH_WORDS:
+        return ParsedCommand(intent="handles", action="refresh")
 
     return None
 

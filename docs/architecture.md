@@ -8,7 +8,7 @@ adds voice-friendly handles and routes user-approved commands into those layers.
 ## Goals
 
 - Put visually distinct, speech-addressable handles on each manageable GNOME
-  window: a color rail and a bird-name tab.
+  window: a colored frame and a bird-name tab.
 - Let the user say commands like `focus yellow`, `close green`, and
   `maximize blue`.
 - Support dictation into the currently focused terminal or text field without
@@ -30,7 +30,7 @@ adds voice-friendly handles and routes user-approved commands into those layers.
 Responsibilities:
 
 - Track manageable `Meta.Window` instances.
-- Draw one colored sidebar and bird-name tab per tracked window.
+- Draw one colored frame and bird-name tab per tracked window.
 - Maintain a handle-to-window registry.
 - Expose a session-bus API for window inventory and commands.
 - Execute compositor-native actions: focus, close, minimize, maximize, and
@@ -47,7 +47,7 @@ Risks:
 
 - GNOME Shell extension APIs can break between shell versions. The first
   scaffold targets GNOME Shell 50.x, which is what this workstation is running.
-- Overlay sidebars are not true server-side decorations. They are visual markers
+- Overlay frames are not true server-side decorations. They are visual markers
   in the shell scene graph and must be kept synchronized with window geometry.
 
 ### 2. Voice Daemon

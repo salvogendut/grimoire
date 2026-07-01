@@ -159,6 +159,19 @@ class ParseTranscriptTests(TestCase):
         self.assertEqual(parsed.intent, "inventory")
         self.assertEqual(parsed.action, "apps")
 
+    def test_refresh_handles(self):
+        parsed = parse_transcript("refresh handles")
+
+        self.assertEqual(parsed.intent, "handles")
+        self.assertEqual(parsed.action, "refresh")
+        self.assertTrue(is_supported_command(parsed))
+
+    def test_handles_refresh_order(self):
+        parsed = parse_transcript("handles reset")
+
+        self.assertEqual(parsed.intent, "handles")
+        self.assertEqual(parsed.action, "refresh")
+
 
 class NormalizeDictationTextTests(TestCase):
     def test_terminal_option_words(self):
@@ -284,6 +297,7 @@ class DispatchTests(TestCase):
                 "title": "Calculator",
                 "wm_class": "org.gnome.Calculator",
                 "focused": True,
+                "handle_source": "remembered",
             },
         ]
         output = io.StringIO()
@@ -298,7 +312,7 @@ class DispatchTests(TestCase):
             [
                 "action: list windows -> ok",
                 "windows:",
-                "- dove/green focused: Calculator [org.gnome.Calculator]",
+                "- dove/green focused remembered: Calculator [org.gnome.Calculator]",
             ],
         )
 
@@ -330,3 +344,15 @@ class DispatchTests(TestCase):
             grimoired.parse_gdbus_string("""('[{"bird": "dove"}]',)"""),
             '[{"bird": "dove"}]',
         )
+
+    def test_refresh_handles_dispatch(self):
+        parsed = ParsedCommand(intent="handles", action="refresh")
+        output = io.StringIO()
+
+        with patch.object(grimoired, "call_shell", return_value=0) as call_shell:
+            with redirect_stdout(output):
+                status = grimoired.dispatch(parsed)
+
+        self.assertEqual(status, 0)
+        call_shell.assert_called_once_with("RefreshHandles")
+        self.assertEqual(output.getvalue().strip(), "action: refresh handles -> ok")

@@ -49,6 +49,9 @@ const DBUS_XML = `
     <method name="Refresh">
       <arg type="b" name="ok" direction="out"/>
     </method>
+    <method name="RefreshHandles">
+      <arg type="b" name="ok" direction="out"/>
+    </method>
     <signal name="WindowsChanged"/>
   </interface>
 </node>`;
@@ -143,12 +146,24 @@ function safeCall(object, methodName, fallback = null) {
     return fallback;
 }
 
+function handleMemory() {
+    if (!globalThis.__grimoireHandleMemory) {
+        globalThis.__grimoireHandleMemory = {
+            exact: new Map(),
+            app: new Map(),
+        };
+    }
+
+    return globalThis.__grimoireHandleMemory;
+}
+
 export default class GrimoireExtension extends Extension {
     enable() {
         this._records = new Map();
         this._busNameId = 0;
         this._dbusImpl = null;
         this._appSystem = Shell.AppSystem.get_default();
+        this._handleMemory = handleMemory();
 
         this._exportDbus();
 
@@ -177,9 +192,10 @@ export default class GrimoireExtension extends Extension {
         this._appSystem = null;
 
         for (const window of [...this._records.keys()])
-            this._removeWindow(window, false);
+            this._removeWindow(window, false, true);
 
         this._records = null;
+        this._handleMemory = null;
     }
 
     ListWindows() {
@@ -266,6 +282,16 @@ export default class GrimoireExtension extends Extension {
         return true;
     }
 
+    RefreshHandles() {
+        this._clearHandleMemory();
+
+        for (const window of [...this._records.keys()])
+            this._removeWindow(window, false, false);
+
+        this._syncWindows();
+        return true;
+    }
+
     _exportDbus() {
         this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(DBUS_XML, this);
         this._dbusImpl.export(Gio.DBus.session, OBJECT_PATH);
@@ -329,8 +355,9 @@ export default class GrimoireExtension extends Extension {
     }
 
     _addWindow(window, actor) {
-        const color = this._nextAvailableColor();
-        const bird = this._nextAvailableBird();
+        const assignment = this._nextAssignmentForWindow(window);
+        const color = assignment?.color;
+        const bird = assignment?.bird;
         if (!color || !bird)
             return;
 
@@ -391,23 +418,31 @@ export default class GrimoireExtension extends Extension {
             frame,
             verticalTab,
             horizontalTab,
+            exactSignature: this._exactWindowSignature(window),
+            appSignature: this._appWindowSignature(window),
+            handleSource: assignment.source,
         });
+        this._rememberAssignment(this._records.get(window));
         this._attachMarker(window);
 
         window.connectObject(
             'size-changed', () => this._syncSidebar(window),
             'position-changed', () => this._syncSidebar(window),
             'workspace-changed', () => this._syncSidebar(window),
+            'notify::title', () => this._rememberWindowAssignment(window),
             'notify::minimized', () => this._syncSidebar(window),
             'notify::skip-taskbar', () => this._syncWindows(),
             'unmanaging', () => this._removeWindow(window),
             this);
     }
 
-    _removeWindow(window, emitChanged = true) {
+    _removeWindow(window, emitChanged = true, remember = true) {
         const record = this._records.get(window);
         if (!record)
             return;
+
+        if (remember)
+            this._rememberAssignment(record);
 
         try {
             window.disconnectObject(this);
@@ -422,16 +457,119 @@ export default class GrimoireExtension extends Extension {
             this._emitWindowsChanged();
     }
 
-    _nextAvailableColor() {
-        const used = new Set([...this._records.values()]
+    _nextAssignmentForWindow(window) {
+        const usedColors = new Set([...this._records.values()]
             .map(record => record.color.name));
-        return PALETTE.find(color => !used.has(color.name)) ?? null;
+        const usedBirds = new Set([...this._records.values()]
+            .map(record => record.bird.name));
+        const exactSignature = this._exactWindowSignature(window);
+        const appSignature = this._appWindowSignature(window);
+        const exact = this._rememberedAssignment(
+            this._handleMemory.exact,
+            exactSignature,
+            usedColors,
+            usedBirds);
+
+        if (exact)
+            return {...exact, source: 'remembered'};
+
+        if (appSignature && !this._hasLiveAppSignature(appSignature)) {
+            const app = this._rememberedAssignment(
+                this._handleMemory.app,
+                appSignature,
+                usedColors,
+                usedBirds);
+            if (app)
+                return {...app, source: 'app-remembered'};
+        }
+
+        const color = PALETTE.find(entry => !usedColors.has(entry.name)) ?? null;
+        const bird = BIRDS.find(entry => !usedBirds.has(entry.name)) ?? null;
+        if (!color || !bird)
+            return null;
+
+        return {color, bird, source: 'new'};
     }
 
-    _nextAvailableBird() {
-        const used = new Set([...this._records.values()]
-            .map(record => record.bird.name));
-        return BIRDS.find(bird => !used.has(bird.name)) ?? null;
+    _rememberedAssignment(memory, key, usedColors, usedBirds) {
+        if (!key)
+            return null;
+
+        const remembered = memory.get(key);
+        if (!remembered)
+            return null;
+
+        if (usedColors.has(remembered.colorName) || usedBirds.has(remembered.birdName))
+            return null;
+
+        const color = PALETTE.find(entry => entry.name === remembered.colorName) ?? null;
+        const bird = BIRDS.find(entry => entry.name === remembered.birdName) ?? null;
+        if (!color || !bird)
+            return null;
+
+        return {color, bird};
+    }
+
+    _rememberWindowAssignment(window) {
+        const record = this._records.get(window);
+        if (!record)
+            return;
+
+        this._rememberAssignment(record);
+    }
+
+    _rememberAssignment(record) {
+        if (!record || !this._handleMemory)
+            return;
+
+        record.exactSignature = this._exactWindowSignature(record.window);
+        record.appSignature = this._appWindowSignature(record.window);
+
+        const assignment = {
+            colorName: record.color.name,
+            birdName: record.bird.name,
+            lastSeen: Date.now(),
+        };
+
+        if (record.exactSignature)
+            this._handleMemory.exact.set(record.exactSignature, assignment);
+
+        if (record.appSignature && !this._hasLiveAppSignature(record.appSignature, record.window))
+            this._handleMemory.app.set(record.appSignature, assignment);
+    }
+
+    _clearHandleMemory() {
+        if (!this._handleMemory)
+            return;
+
+        this._handleMemory.exact.clear();
+        this._handleMemory.app.clear();
+    }
+
+    _exactWindowSignature(window) {
+        const wmClass = normalizeSearchTerm(safeCall(window, 'get_wm_class', '') ?? '');
+        const title = normalizeSearchTerm(safeCall(window, 'get_title', '') ?? '');
+        if (!wmClass && !title)
+            return '';
+
+        return `${wmClass}|${title}`;
+    }
+
+    _appWindowSignature(window) {
+        return normalizeSearchTerm(safeCall(window, 'get_wm_class', '') ?? '');
+    }
+
+    _hasLiveAppSignature(appSignature, exceptWindow = null) {
+        for (const record of this._records.values()) {
+            if (record.window === exceptWindow)
+                continue;
+
+            const currentSignature = record.appSignature || this._appWindowSignature(record.window);
+            if (currentSignature === appSignature)
+                return true;
+        }
+
+        return false;
     }
 
     _findByHandle(handle) {
@@ -600,6 +738,7 @@ export default class GrimoireExtension extends Extension {
             pid: safeCall(record.window, 'get_pid', 0) ?? 0,
             stable_sequence: safeCall(record.window, 'get_stable_sequence', 0) ?? 0,
             focused: global.display.focus_window === record.window,
+            handle_source: record.handleSource,
         }));
     }
 
