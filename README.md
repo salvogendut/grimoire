@@ -146,9 +146,10 @@ python3 daemon/grimoired.py --listen-loop --record-seconds 3
 ```
 
 In loop mode, press Enter to record one command and type `q` then Enter to
-quit. Non-destructive window commands execute immediately. Destructive commands
-such as `close sparrow` require confirmation. Use `--dry-run` with
-`--listen-loop` to transcribe and parse without executing.
+quit. When `--execute-listen` is set and execution is armed, non-destructive
+window commands execute immediately. Destructive commands such as
+`close sparrow` require confirmation. Use `--dry-run` with `--listen-loop` to
+transcribe and parse without executing.
 
 The daemon prints a compact trace while parsing and executing commands:
 
@@ -190,8 +191,35 @@ state:
 - Yellow: daemon listening, execution disabled.
 - Green: daemon listening and armed for execution.
 
-Click the icon to toggle between yellow and green. The daemon checks this armed
-state immediately before dispatching a listened command.
+Click the icon, or press `Ctrl+Alt+Space`, to toggle between yellow and green.
+The daemon checks this armed state immediately before dispatching a listened
+command.
+
+The same execution gate can be inspected or changed from the terminal:
+
+```sh
+make execution-mode
+make arm-execution
+make disarm-execution
+```
+
+The default shortcut is stored in the extension's `toggle-execution` setting.
+For a local development install, change it with:
+
+```sh
+gsettings \
+  --schemadir ~/.local/share/gnome-shell/extensions/grimoire@salvogendut.github.io/schemas \
+  set org.grimoire toggle-execution "['<Control><Alt>space']"
+```
+
+When installed as a user service, common service controls are available:
+
+```sh
+make start-daemon
+make stop-daemon
+make status-daemon
+make logs-daemon
+```
 
 You can override the recognizer with an ASR command template:
 

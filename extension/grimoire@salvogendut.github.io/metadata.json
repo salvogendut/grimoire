@@ -3,6 +3,7 @@
   "name": "Grimoire",
   "description": "Voice-addressable colored window handles for GNOME Shell.",
   "shell-version": ["50"],
+  "settings-schema": "org.grimoire",
   "url": "https://github.com/salvogendut/grimoire",
   "version": 1
 }

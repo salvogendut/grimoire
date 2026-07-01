@@ -32,7 +32,8 @@ Responsibilities:
 - Track manageable `Meta.Window` instances.
 - Draw one colored frame and bird-name tab per tracked window.
 - Show a top-bar daemon status indicator based on daemon heartbeats.
-- Let the top-bar indicator arm or disarm listened command execution.
+- Let the top-bar indicator or keyboard shortcut arm or disarm listened command
+  execution.
 - Maintain a handle-to-window registry.
 - Expose a session-bus API for window inventory and commands.
 - Execute compositor-native actions: focus, close, minimize, maximize, and

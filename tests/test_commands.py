@@ -439,3 +439,45 @@ class RuntimeConfigTests(TestCase):
 
         with patch.object(grimoired, "execution_mode_enabled", return_value=True):
             self.assertTrue(grimoired.should_execute_listened_command(args, trace=False))
+
+    def test_print_execution_mode_armed(self):
+        output = io.StringIO()
+
+        with patch.object(grimoired, "call_shell_boolean", return_value=(0, True)):
+            with redirect_stdout(output):
+                status = grimoired.print_execution_mode()
+
+        self.assertEqual(status, 0)
+        self.assertEqual(output.getvalue().strip(), "execution: armed")
+
+    def test_print_execution_mode_unknown_on_failure(self):
+        output = io.StringIO()
+
+        with patch.object(grimoired, "call_shell_boolean", return_value=(1, False)):
+            with redirect_stdout(output):
+                status = grimoired.print_execution_mode()
+
+        self.assertEqual(status, 1)
+        self.assertEqual(output.getvalue().strip(), "execution: unknown")
+
+    def test_set_execution_mode_armed(self):
+        output = io.StringIO()
+
+        with patch.object(grimoired, "call_shell", return_value=0) as call_shell:
+            with redirect_stdout(output):
+                status = grimoired.set_execution_mode(True)
+
+        self.assertEqual(status, 0)
+        call_shell.assert_called_once_with("SetExecutionMode", "true")
+        self.assertEqual(output.getvalue().strip(), "execution: armed")
+
+    def test_set_execution_mode_disarmed(self):
+        output = io.StringIO()
+
+        with patch.object(grimoired, "call_shell", return_value=0) as call_shell:
+            with redirect_stdout(output):
+                status = grimoired.set_execution_mode(False)
+
+        self.assertEqual(status, 0)
+        call_shell.assert_called_once_with("SetExecutionMode", "false")
+        self.assertEqual(output.getvalue().strip(), "execution: disarmed")

@@ -1,6 +1,6 @@
 Name:           grimoire
 Version:        0.1.0
-Release:        2%{?dist}
+Release:        3%{?dist}
 Summary:        GNOME voice-control handles and daemon
 
 # TODO: choose the project license before publishing this package.
@@ -9,6 +9,7 @@ URL:            https://github.com/salvogendut/grimoire
 Source0:        %{name}-%{version}.tar.gz
 
 BuildArch:      noarch
+BuildRequires:  glib2
 BuildRequires:  make
 BuildRequires:  python3
 BuildRequires:  systemd-rpm-macros
@@ -57,6 +58,9 @@ such as focus, maximize, open application, and dictation over the session bus.
 %{_userunitdir}/grimoired.service
 
 %changelog
+* Wed Jul 01 2026 Salvo Gendut <salvogendut@users.noreply.github.com> - 0.1.0-3
+- Add keyboard, command-line, and Makefile controls for the execution gate.
+
 * Wed Jul 01 2026 Salvo Gendut <salvogendut@users.noreply.github.com> - 0.1.0-2
 - Add shell-controlled execution gate for the daemon service.
 

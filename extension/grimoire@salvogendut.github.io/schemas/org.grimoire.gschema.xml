@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.grimoire" path="/org/grimoire/">
+    <key name="toggle-execution" type="as">
+      <default><![CDATA[['<Control><Alt>space']]]></default>
+      <summary>Toggle listened command execution</summary>
+      <description>
+        Keyboard shortcut used by the Grimoire GNOME Shell extension to arm or
+        disarm execution of listened commands.
+      </description>
+    </key>
+  </schema>
+</schemalist>

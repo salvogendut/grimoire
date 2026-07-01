@@ -79,6 +79,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Ask the shell extension for launchable applications.",
     )
     parser.add_argument(
+        "--execution-mode",
+        action="store_true",
+        help="Print whether listened command execution is currently armed.",
+    )
+    parser.add_argument(
+        "--arm-execution",
+        action="store_true",
+        help="Allow listened commands to execute until disarmed or the daemon stops.",
+    )
+    parser.add_argument(
+        "--disarm-execution",
+        action="store_true",
+        help="Prevent listened commands from executing.",
+    )
+    parser.add_argument(
         "--listen",
         action="store_true",
         help="Record one short utterance, transcribe it, and parse it.",
@@ -129,6 +144,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.list_apps:
         return call_shell("ListApps")
 
+    if args.execution_mode:
+        return print_execution_mode()
+
+    if args.arm_execution:
+        return set_execution_mode(True)
+
+    if args.disarm_execution:
+        return set_execution_mode(False)
+
     if args.listen_loop:
         return listen_loop(args)
 
@@ -141,7 +165,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.command:
         parser.error(
             "--command is required unless --list-windows, --list-apps, --listen, "
-            "--listen-loop, --listen-service, or --audio-file is used"
+            "--execution-mode, --arm-execution, --disarm-execution, --listen-loop, "
+            "--listen-service, or --audio-file is used"
         )
 
     parsed = parse_transcript(args.command)
@@ -261,7 +286,7 @@ def should_execute_listened_command(args: argparse.Namespace, trace: bool = True
 
     enabled = execution_mode_enabled()
     if trace and not enabled:
-        print("execution disabled; click the Grimoire top-bar icon to arm")
+        print("execution disabled; click the Grimoire top-bar icon or press Ctrl+Alt+Space to arm")
 
     return enabled
 
@@ -269,6 +294,24 @@ def should_execute_listened_command(args: argparse.Namespace, trace: bool = True
 def execution_mode_enabled() -> bool:
     status, enabled = call_shell_boolean("GetExecutionMode")
     return status == 0 and enabled
+
+
+def print_execution_mode() -> int:
+    status, enabled = call_shell_boolean("GetExecutionMode")
+    if status != 0:
+        print("execution: unknown")
+        return status
+
+    print(f"execution: {'armed' if enabled else 'disarmed'}")
+    return 0
+
+
+def set_execution_mode(enabled: bool) -> int:
+    status = call_shell("SetExecutionMode", "true" if enabled else "false")
+    if status == 0:
+        print(f"execution: {'armed' if enabled else 'disarmed'}")
+
+    return status
 
 
 def listen_once(args: argparse.Namespace) -> int:

@@ -2,6 +2,7 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
+import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
@@ -82,6 +83,7 @@ const HORIZONTAL_TAB_LETTER_WIDTH = 11;
 const HORIZONTAL_TAB_RIGHT_INSET = 0;
 const DAEMON_HEARTBEAT_TIMEOUT_MS = 6000;
 const DAEMON_WATCH_INTERVAL_SECONDS = 2;
+const TOGGLE_EXECUTION_KEYBINDING = 'toggle-execution';
 const KEY_PAUSE_MS = 15;
 
 const PALETTE = [
@@ -237,6 +239,7 @@ export default class GrimoireExtension extends Extension {
         this._busNameId = 0;
         this._dbusImpl = null;
         this._appSystem = Shell.AppSystem.get_default();
+        this._settings = this.getSettings();
         this._handleMemory = handleMemory();
         this._daemonLastSeen = 0;
         this._daemonMonitorId = 0;
@@ -246,6 +249,7 @@ export default class GrimoireExtension extends Extension {
             () => this._toggleExecutionMode());
         Main.panel.addToStatusArea('grimoire-daemon', this._indicator);
         this._startDaemonMonitor();
+        this._addKeybindings();
 
         this._exportDbus();
 
@@ -270,12 +274,14 @@ export default class GrimoireExtension extends Extension {
         global.window_manager.disconnectObject(this);
         global.display.disconnectObject(this);
 
+        this._removeKeybindings();
         this._stopDaemonMonitor();
         this._indicator?.destroy();
         this._indicator = null;
 
         this._unexportDbus();
         this._appSystem = null;
+        this._settings = null;
 
         for (const window of [...this._records.keys()])
             this._removeWindow(window, false, true);
@@ -445,6 +451,19 @@ export default class GrimoireExtension extends Extension {
         }
 
         this._setExecutionEnabled(!this._executionEnabled);
+    }
+
+    _addKeybindings() {
+        Main.wm.addKeybinding(
+            TOGGLE_EXECUTION_KEYBINDING,
+            this._settings,
+            Meta.KeyBindingFlags.IGNORE_AUTOREPEAT,
+            Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW,
+            () => this._toggleExecutionMode());
+    }
+
+    _removeKeybindings() {
+        Main.wm.removeKeybinding(TOGGLE_EXECUTION_KEYBINDING);
     }
 
     _exportDbus() {
