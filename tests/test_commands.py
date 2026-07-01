@@ -1,3 +1,5 @@
+import io
+from contextlib import redirect_stdout
 from unittest import TestCase
 from unittest.mock import call, patch
 
@@ -186,7 +188,7 @@ class DispatchTests(TestCase):
 
         with patch.object(grimoired, "call_shell", side_effect=[0, 0, 0]) as call_shell:
             with patch.object(grimoired.time, "sleep") as sleep:
-                status = grimoired.dispatch(parsed)
+                status = grimoired.dispatch(parsed, trace=False)
 
         self.assertEqual(status, 0)
         self.assertEqual(
@@ -203,7 +205,7 @@ class DispatchTests(TestCase):
         parsed = ParsedCommand(intent="dictate", handle="dove", text="git status enter")
 
         with patch.object(grimoired, "call_shell", return_value=1) as call_shell:
-            status = grimoired.dispatch(parsed)
+            status = grimoired.dispatch(parsed, trace=False)
 
         self.assertEqual(status, 1)
         call_shell.assert_called_once_with("RunWindowCommand", "dove", "focus")
@@ -213,7 +215,7 @@ class DispatchTests(TestCase):
 
         with patch.object(grimoired, "call_shell", side_effect=[0, 0]) as call_shell:
             with patch.object(grimoired.time, "sleep"):
-                status = grimoired.dispatch(parsed)
+                status = grimoired.dispatch(parsed, trace=False)
 
         self.assertEqual(status, 0)
         self.assertEqual(
@@ -223,3 +225,33 @@ class DispatchTests(TestCase):
                 call("PressKey", "enter"),
             ],
         )
+
+    def test_targeted_dictation_trace(self):
+        parsed = ParsedCommand(intent="dictate", handle="dove", text="git status enter")
+        output = io.StringIO()
+
+        with patch.object(grimoired, "call_shell", side_effect=[0, 0, 0]):
+            with patch.object(grimoired.time, "sleep"):
+                with redirect_stdout(output):
+                    status = grimoired.dispatch(parsed)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                "action: focus dove -> ok",
+                'action: paste "git status" -> ok',
+                "action: press enter -> ok",
+            ],
+        )
+
+    def test_failed_action_trace(self):
+        parsed = ParsedCommand(intent="window", action="focus", handle="dove")
+        output = io.StringIO()
+
+        with patch.object(grimoired, "call_shell", return_value=1):
+            with redirect_stdout(output):
+                status = grimoired.dispatch(parsed)
+
+        self.assertEqual(status, 1)
+        self.assertEqual(output.getvalue().strip(), "action: focus dove -> failed")

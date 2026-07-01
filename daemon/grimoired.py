@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import shlex
@@ -48,6 +49,11 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run",
         action="store_true",
         help="Parse the command but do not call the shell extension.",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress command trace output.",
     )
     parser.add_argument(
         "--list-windows",
@@ -112,11 +118,16 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     parsed = parse_transcript(args.command)
+    trace = not args.quiet
+    if trace:
+        trace_recognition(args.command, parsed)
+
     if args.dry_run:
-        print(parsed)
+        if not trace:
+            print(parsed)
         return 0
 
-    return dispatch(parsed)
+    return dispatch(parsed, trace=trace)
 
 
 def listen_loop(args: argparse.Namespace) -> int:
@@ -148,7 +159,7 @@ def listen_loop(args: argparse.Namespace) -> int:
             print("skipped")
             continue
 
-        dispatch(parsed)
+        dispatch(parsed, trace=not args.quiet)
 
 
 def listen_once(args: argparse.Namespace) -> int:
@@ -158,7 +169,7 @@ def listen_once(args: argparse.Namespace) -> int:
         if not is_supported_command(parsed):
             print("No supported command recognized.", file=sys.stderr)
             return 2
-        return dispatch(parsed)
+        return dispatch(parsed, trace=not args.quiet)
 
     return 0
 
@@ -174,8 +185,11 @@ def listen_and_parse(args: argparse.Namespace) -> ParsedCommand:
         transcript = transcribe_audio(audio_path, tmpdir, args.asr_command)
         parsed = parse_transcript(transcript)
 
-        print(f"transcript: {transcript}")
-        print(f"parsed: {parsed}")
+        if not args.quiet:
+            trace_recognition(transcript, parsed)
+        else:
+            print(f"transcript: {transcript}")
+            print(f"parsed: {parsed}")
 
         return parsed
 
@@ -303,34 +317,56 @@ def format_failure(command: list[str], result: subprocess.CompletedProcess[str],
     return "\n".join(lines)
 
 
-def dispatch(parsed: ParsedCommand) -> int:
+def dispatch(parsed: ParsedCommand, trace: bool = True) -> int:
     if parsed.is_window_command:
         assert parsed.handle is not None
         assert parsed.action is not None
-        return call_shell("RunWindowCommand", parsed.handle, parsed.action)
+        return run_shell_action(
+            f"{parsed.action} {parsed.handle}",
+            "RunWindowCommand",
+            parsed.handle,
+            parsed.action,
+            trace=trace,
+        )
 
     if parsed.is_app_command:
         assert parsed.app is not None
-        return call_shell("LaunchApp", parsed.app)
+        return run_shell_action(
+            f"open app {quote_text(parsed.app)}",
+            "LaunchApp",
+            parsed.app,
+            trace=trace,
+        )
 
     if parsed.intent == "dictate":
         assert parsed.text is not None
         if parsed.handle is not None:
-            focus_status = call_shell("RunWindowCommand", parsed.handle, "focus")
+            focus_status = run_shell_action(
+                f"focus {parsed.handle}",
+                "RunWindowCommand",
+                parsed.handle,
+                "focus",
+                trace=trace,
+            )
             if focus_status != 0:
                 return focus_status
             time.sleep(0.15)
 
         dictation = normalize_dictation_input(parsed.text)
         if dictation.text:
-            paste_status = call_shell("PasteText", dictation.text)
+            paste_status = run_shell_action(
+                f"paste {quote_text(dictation.text)}",
+                "PasteText",
+                dictation.text,
+                trace=trace,
+            )
             if paste_status != 0:
                 return paste_status
             if dictation.enter_presses:
                 time.sleep(0.08)
 
         for _ in range(dictation.enter_presses):
-            key_status = call_shell("PressKey", "enter")
+            key_status = run_shell_action("press enter", "PressKey", "enter", trace=trace)
             if key_status != 0:
                 return key_status
 
@@ -343,6 +379,41 @@ def dispatch(parsed: ParsedCommand) -> int:
 def confirm_command(parsed: ParsedCommand) -> bool:
     answer = input(f"Confirm {parsed.action} {parsed.handle}? [y/N] ")
     return answer.strip().lower() in {"y", "yes"}
+
+
+def trace_recognition(transcript: str, parsed: ParsedCommand) -> None:
+    print(f"heard: {quote_text(transcript)}")
+    print(f"parsed: {describe_parsed_command(parsed)}")
+
+
+def describe_parsed_command(parsed: ParsedCommand) -> str:
+    if parsed.is_window_command:
+        return f"window action={parsed.action} target={parsed.handle}"
+
+    if parsed.is_app_command:
+        return f"app action=open name={quote_text(parsed.app or '')}"
+
+    if parsed.intent == "dictate":
+        target = parsed.handle if parsed.handle is not None else "focused"
+        return f"dictate target={target} text={quote_text(parsed.text or '')}"
+
+    if parsed.text:
+        return f"{parsed.intent} text={quote_text(parsed.text)}"
+
+    return parsed.intent
+
+
+def run_shell_action(label: str, method: str, *args: str, trace: bool = True) -> int:
+    status = call_shell(method, *args)
+    if trace:
+        result = "ok" if status == 0 else "failed"
+        print(f"action: {label} -> {result}")
+
+    return status
+
+
+def quote_text(text: str) -> str:
+    return json.dumps(text, ensure_ascii=False)
 
 
 def call_shell(method: str, *args: str) -> int:
@@ -367,15 +438,20 @@ def call_shell(method: str, *args: str) -> int:
         stderr=subprocess.PIPE,
     )
 
-    if result.stdout:
+    stdout = result.stdout.strip()
+    if result.stdout and not is_dbus_boolean(stdout):
         print(result.stdout.rstrip())
     if result.stderr:
         print(result.stderr.rstrip(), file=sys.stderr)
 
-    if result.returncode == 0 and result.stdout.strip().startswith("(false"):
+    if result.returncode == 0 and stdout.startswith("(false"):
         return 1
 
     return result.returncode
+
+
+def is_dbus_boolean(output: str) -> bool:
+    return output.startswith("(true") or output.startswith("(false")
 
 
 if __name__ == "__main__":

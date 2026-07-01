@@ -123,6 +123,18 @@ quit. Non-destructive window commands execute immediately. Destructive commands
 such as `close sparrow` require confirmation. Use `--dry-run` with
 `--listen-loop` to transcribe and parse without executing.
 
+The daemon prints a compact trace while parsing and executing commands:
+
+```text
+heard: "type dove git status enter"
+parsed: dictate target=dove text="git status enter"
+action: focus dove -> ok
+action: paste "git status" -> ok
+action: press enter -> ok
+```
+
+Pass `--quiet` to suppress the trace.
+
 Dictation uses the focused window. Say `type hello world` to paste text into
 the active app. Common terminal words are normalized before paste, for example
 `type ls minus la enter` pastes `ls -la` and then presses Enter.
