@@ -2,7 +2,7 @@
 
 Grimoire is an experimental GNOME-based voice control layer for Linux.
 It does not replace Mutter or GNOME Shell. Instead, it adds a small GNOME
-Shell extension that gives each visible window a color handle, then exposes
+Shell extension that gives each visible window a colored frame and handle, then exposes
 window actions over the session bus so a local voice daemon can execute
 commands such as:
 
@@ -15,16 +15,27 @@ open calculator
 type make test
 ```
 
-The first milestone is focus and window management by color. Dictation is
-planned as a separate input layer because Wayland intentionally restricts
-arbitrary keystroke injection.
+The current prototype covers focus/window management by color or bird handle,
+application launching, and clipboard-paste dictation with terminal-aware Enter
+handling.
+
+## Screenshots
+
+<p>
+  <img src="screenshots/desktop.png" alt="Grimoire colored window frames with bird labels" width="49%">
+  <img src="screenshots/framed-labels-files.png" alt="Multiple Grimoire framed windows with labels" width="49%">
+</p>
+
+<p>
+  <img src="screenshots/framed-labels-gallery.png" alt="Grimoire framed labels across several overlapping windows" width="49%">
+</p>
 
 ## Current State
 
 This repository currently contains:
 
 - `extension/grimoire@salvogendut.github.io`: GNOME Shell extension skeleton
-  for colored sidebars, bird-name tabs, and focus/window actions over DBus.
+  for colored frames, bird-name tabs, and focus/window actions over DBus.
 - `daemon/grimoired.py`: small command parser and dispatcher for local testing.
 - `docs/architecture.md`: system design and major constraints.
 - `docs/protocol.md`: the first DBus contract between the daemon and extension.
@@ -83,6 +94,13 @@ Open an application by voice-style command text:
 
 ```sh
 python3 daemon/grimoired.py --command "open calculator"
+```
+
+Ask for the current visible handles or launchable applications:
+
+```sh
+python3 daemon/grimoired.py --command "list windows"
+python3 daemon/grimoired.py --command "show apps"
 ```
 
 Run the current tests:
@@ -159,7 +177,7 @@ python3 daemon/grimoired.py --audio-file sample.wav --asr-command "my-asr {audio
 
 Grimoire has three cooperating layers:
 
-1. GNOME Shell extension: colored sidebars, window inventory, focus, close,
+1. GNOME Shell extension: colored frames, window inventory, focus, close,
    minimize, maximize, fullscreen.
 2. Voice daemon: microphone capture, speech recognition, command parsing, and
    dispatch.

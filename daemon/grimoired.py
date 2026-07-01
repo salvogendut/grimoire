@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 from pathlib import Path
@@ -338,6 +339,10 @@ def dispatch(parsed: ParsedCommand, trace: bool = True) -> int:
             trace=trace,
         )
 
+    if parsed.is_inventory_command:
+        assert parsed.action is not None
+        return dispatch_inventory(parsed.action, trace=trace)
+
     if parsed.intent == "dictate":
         assert parsed.text is not None
         if parsed.handle is not None:
@@ -381,6 +386,104 @@ def confirm_command(parsed: ParsedCommand) -> bool:
     return answer.strip().lower() in {"y", "yes"}
 
 
+def dispatch_inventory(action: str, trace: bool = True) -> int:
+    if action == "windows":
+        status, windows = call_shell_json("ListWindows")
+        if trace:
+            print(f"action: list windows -> {'ok' if status == 0 else 'failed'}")
+        if status == 0:
+            print(format_windows(windows))
+        return status
+
+    if action == "apps":
+        status, apps = call_shell_json("ListApps")
+        if trace:
+            print(f"action: list apps -> {'ok' if status == 0 else 'failed'}")
+        if status == 0:
+            print(format_apps(apps))
+        return status
+
+    print(f"Unsupported inventory action: {action}", file=sys.stderr)
+    return 2
+
+
+def call_shell_json(method: str, *args: str) -> tuple[int, list[dict[str, object]]]:
+    result = run_gdbus(method, *args)
+    if result.stderr:
+        print(result.stderr.rstrip(), file=sys.stderr)
+
+    status = shell_status(result)
+    if status != 0:
+        if result.stdout:
+            print(result.stdout.rstrip())
+        return status, []
+
+    try:
+        payload = parse_gdbus_string(result.stdout)
+        parsed = json.loads(payload)
+    except (SyntaxError, ValueError, TypeError, json.JSONDecodeError) as error:
+        print(f"Failed to parse {method} response: {error}", file=sys.stderr)
+        if result.stdout:
+            print(result.stdout.rstrip(), file=sys.stderr)
+        return 1, []
+
+    if not isinstance(parsed, list):
+        print(f"Expected {method} to return a JSON list", file=sys.stderr)
+        return 1, []
+
+    return 0, [entry for entry in parsed if isinstance(entry, dict)]
+
+
+def parse_gdbus_string(output: str) -> str:
+    parsed = ast.literal_eval(output.strip())
+    if not isinstance(parsed, tuple) or not parsed or not isinstance(parsed[0], str):
+        raise ValueError("expected a one-string DBus tuple")
+
+    return parsed[0]
+
+
+def format_windows(windows: list[dict[str, object]]) -> str:
+    if not windows:
+        return "windows: none"
+
+    lines = ["windows:"]
+    for window in windows:
+        bird = clean_field(window.get("bird"), "?")
+        color = clean_field(window.get("color"), "?")
+        title = clean_field(window.get("title"), "untitled")
+        wm_class = clean_field(window.get("wm_class"), "")
+        focused = " focused" if window.get("focused") else ""
+        suffix = f" [{wm_class}]" if wm_class else ""
+        lines.append(f"- {bird}/{color}{focused}: {title}{suffix}")
+
+    return "\n".join(lines)
+
+
+def format_apps(apps: list[dict[str, object]], limit: int = 30) -> str:
+    if not apps:
+        return "apps: none"
+
+    names = [
+        clean_field(app.get("name"), clean_field(app.get("id"), "unnamed"))
+        for app in apps
+    ]
+    shown = names[:limit]
+    lines = [f"apps: {len(apps)} available"]
+    lines.extend(f"- {name}" for name in shown)
+    if len(apps) > limit:
+        lines.append(f"... {len(apps) - limit} more")
+
+    return "\n".join(lines)
+
+
+def clean_field(value: object, fallback: str) -> str:
+    if value is None:
+        return fallback
+
+    text = str(value).strip()
+    return text if text else fallback
+
+
 def trace_recognition(transcript: str, parsed: ParsedCommand) -> None:
     print(f"heard: {quote_text(transcript)}")
     print(f"parsed: {describe_parsed_command(parsed)}")
@@ -392,6 +495,9 @@ def describe_parsed_command(parsed: ParsedCommand) -> str:
 
     if parsed.is_app_command:
         return f"app action=open name={quote_text(parsed.app or '')}"
+
+    if parsed.is_inventory_command:
+        return f"inventory action={parsed.action}"
 
     if parsed.intent == "dictate":
         target = parsed.handle if parsed.handle is not None else "focused"
@@ -417,6 +523,18 @@ def quote_text(text: str) -> str:
 
 
 def call_shell(method: str, *args: str) -> int:
+    result = run_gdbus(method, *args)
+
+    stdout = result.stdout.strip()
+    if result.stdout and not is_dbus_boolean(stdout):
+        print(result.stdout.rstrip())
+    if result.stderr:
+        print(result.stderr.rstrip(), file=sys.stderr)
+
+    return shell_status(result)
+
+
+def run_gdbus(method: str, *args: str) -> subprocess.CompletedProcess[str]:
     command = [
         "gdbus",
         "call",
@@ -430,7 +548,7 @@ def call_shell(method: str, *args: str) -> int:
         *args,
     ]
 
-    result = subprocess.run(
+    return subprocess.run(
         command,
         check=False,
         text=True,
@@ -438,12 +556,9 @@ def call_shell(method: str, *args: str) -> int:
         stderr=subprocess.PIPE,
     )
 
-    stdout = result.stdout.strip()
-    if result.stdout and not is_dbus_boolean(stdout):
-        print(result.stdout.rstrip())
-    if result.stderr:
-        print(result.stderr.rstrip(), file=sys.stderr)
 
+def shell_status(result: subprocess.CompletedProcess[str]) -> int:
+    stdout = result.stdout.strip()
     if result.returncode == 0 and stdout.startswith("(false"):
         return 1
 

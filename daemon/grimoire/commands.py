@@ -45,6 +45,10 @@ WINDOW_ACTIONS = (
 
 APP_ACTIONS = ("open", "launch", "start")
 
+INVENTORY_WINDOW_WORDS = {"window", "windows", "handle", "handles"}
+INVENTORY_APP_WORDS = {"app", "apps", "application", "applications", "program", "programs"}
+INVENTORY_ACTION_WORDS = {"list", "show", "what", "which"}
+
 ACTION_ALIASES = {
     "maximized": "maximize",
     "unmaximized": "unmaximize",
@@ -134,6 +138,10 @@ class ParsedCommand:
         return self.intent == "app"
 
     @property
+    def is_inventory_command(self) -> bool:
+        return self.intent == "inventory"
+
+    @property
     def color(self) -> str | None:
         return self.handle
 
@@ -148,6 +156,10 @@ def parse_transcript(transcript: str) -> ParsedCommand:
     raw = transcript.strip()
     if not raw:
         return ParsedCommand(intent="empty")
+
+    parsed = _parse_inventory(raw)
+    if parsed is not None:
+        return parsed
 
     dictation = _parse_dictation(raw)
     if dictation is not None:
@@ -170,7 +182,12 @@ def parse_transcript(transcript: str) -> ParsedCommand:
 
 
 def is_supported_command(parsed: ParsedCommand) -> bool:
-    return parsed.is_window_command or parsed.is_app_command or parsed.intent == "dictate"
+    return (
+        parsed.is_window_command or
+        parsed.is_app_command or
+        parsed.is_inventory_command or
+        parsed.intent == "dictate"
+    )
 
 
 def requires_confirmation(parsed: ParsedCommand) -> bool:
@@ -252,6 +269,22 @@ def _parse_dictation_target(text: str) -> tuple[str | None, str]:
     return handle, match.group("text").strip()
 
 
+def _parse_inventory(raw: str) -> ParsedCommand | None:
+    tokens = _raw_tokens(raw)
+    token_set = set(tokens)
+
+    if not token_set.intersection(INVENTORY_ACTION_WORDS):
+        return None
+
+    if token_set.intersection(INVENTORY_WINDOW_WORDS):
+        return ParsedCommand(intent="inventory", action="windows")
+
+    if token_set.intersection(INVENTORY_APP_WORDS):
+        return ParsedCommand(intent="inventory", action="apps")
+
+    return None
+
+
 def _parse_action_handle(tokens: list[str]) -> ParsedCommand | None:
     tokens = _normalize_action_tokens(tokens)
     first, second = tokens[0], tokens[1]
@@ -295,12 +328,16 @@ def _normalize_action_tokens(tokens: list[str]) -> list[str]:
 
 
 def _tokens(text: str) -> list[str]:
-    normalized = re.sub(r"[^a-z0-9]+", " ", text.lower())
     return [
         token
-        for token in normalized.split()
+        for token in _raw_tokens(text)
         if token and token not in _STOPWORDS
     ]
+
+
+def _raw_tokens(text: str) -> list[str]:
+    normalized = re.sub(r"[^a-z0-9]+", " ", text.lower())
+    return normalized.split()
 
 
 def _dictation_pieces(text: str) -> list[str]:

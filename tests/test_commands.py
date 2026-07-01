@@ -140,6 +140,25 @@ class ParseTranscriptTests(TestCase):
         self.assertEqual(parsed.action, "open")
         self.assertEqual(parsed.app, "calculator")
 
+    def test_list_windows(self):
+        parsed = parse_transcript("list windows")
+
+        self.assertEqual(parsed.intent, "inventory")
+        self.assertEqual(parsed.action, "windows")
+        self.assertTrue(is_supported_command(parsed))
+
+    def test_what_handles(self):
+        parsed = parse_transcript("what handles")
+
+        self.assertEqual(parsed.intent, "inventory")
+        self.assertEqual(parsed.action, "windows")
+
+    def test_show_apps(self):
+        parsed = parse_transcript("show apps")
+
+        self.assertEqual(parsed.intent, "inventory")
+        self.assertEqual(parsed.action, "apps")
+
 
 class NormalizeDictationTextTests(TestCase):
     def test_terminal_option_words(self):
@@ -255,3 +274,59 @@ class DispatchTests(TestCase):
 
         self.assertEqual(status, 1)
         self.assertEqual(output.getvalue().strip(), "action: focus dove -> failed")
+
+    def test_inventory_windows_trace_and_output(self):
+        parsed = ParsedCommand(intent="inventory", action="windows")
+        windows = [
+            {
+                "bird": "dove",
+                "color": "green",
+                "title": "Calculator",
+                "wm_class": "org.gnome.Calculator",
+                "focused": True,
+            },
+        ]
+        output = io.StringIO()
+
+        with patch.object(grimoired, "call_shell_json", return_value=(0, windows)):
+            with redirect_stdout(output):
+                status = grimoired.dispatch(parsed)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                "action: list windows -> ok",
+                "windows:",
+                "- dove/green focused: Calculator [org.gnome.Calculator]",
+            ],
+        )
+
+    def test_inventory_apps_trace_and_output(self):
+        parsed = ParsedCommand(intent="inventory", action="apps")
+        apps = [
+            {"id": "org.gnome.Calculator.desktop", "name": "Calculator"},
+            {"id": "org.gnome.Nautilus.desktop", "name": "Files"},
+        ]
+        output = io.StringIO()
+
+        with patch.object(grimoired, "call_shell_json", return_value=(0, apps)):
+            with redirect_stdout(output):
+                status = grimoired.dispatch(parsed)
+
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            output.getvalue().splitlines(),
+            [
+                "action: list apps -> ok",
+                "apps: 2 available",
+                "- Calculator",
+                "- Files",
+            ],
+        )
+
+    def test_parse_gdbus_string(self):
+        self.assertEqual(
+            grimoired.parse_gdbus_string("""('[{"bird": "dove"}]',)"""),
+            '[{"bird": "dove"}]',
+        )
