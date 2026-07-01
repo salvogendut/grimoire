@@ -407,6 +407,63 @@ class RuntimeConfigTests(TestCase):
             "focus dove",
         )
 
+    def test_check_asr_found_with_environment_overrides(self):
+        output = io.StringIO()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            whisper_cli = Path(tmpdir) / "whisper-cli"
+            whisper_model = Path(tmpdir) / "ggml-base.en.bin"
+            whisper_cli.write_text("", encoding="utf-8")
+            whisper_model.write_text("", encoding="utf-8")
+
+            with patch.dict(
+                grimoired.os.environ,
+                {
+                    "GRIMOIRE_WHISPER_CLI": str(whisper_cli),
+                    "GRIMOIRE_WHISPER_MODEL": str(whisper_model),
+                },
+            ):
+                with redirect_stdout(output):
+                    status = grimoired.check_asr()
+
+        self.assertEqual(status, 0)
+        self.assertIn(f"whisper-cli: found {whisper_cli}", output.getvalue())
+        self.assertIn(f"model: found {whisper_model}", output.getvalue())
+
+    def test_check_asr_missing_default_setup(self):
+        output = io.StringIO()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing_cli = Path(tmpdir) / "missing-whisper-cli"
+            missing_model = Path(tmpdir) / "missing-model.bin"
+
+            with patch.object(grimoired, "WHISPER_CPP_CANDIDATES", (missing_cli,)):
+                with patch.object(grimoired, "WHISPER_MODEL_CANDIDATES", (missing_model,)):
+                    with patch.dict(
+                        grimoired.os.environ,
+                        {
+                            "GRIMOIRE_WHISPER_CLI": "",
+                            "GRIMOIRE_WHISPER_MODEL": "",
+                        },
+                    ):
+                        with redirect_stdout(output):
+                            status = grimoired.check_asr()
+
+        self.assertEqual(status, 1)
+        self.assertIn(f"whisper-cli: missing {missing_cli}", output.getvalue())
+        self.assertIn(f"model: missing {missing_model}", output.getvalue())
+        self.assertIn("hint: install whisper.cpp", output.getvalue())
+
+    def test_check_asr_custom_command(self):
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            status = grimoired.check_asr(f"{grimoired.sys.executable} {{audio}}")
+
+        self.assertEqual(status, 0)
+        self.assertIn("asr-command: ", output.getvalue())
+        self.assertIn("asr-command executable: found", output.getvalue())
+
     def test_configured_path_prefers_environment(self):
         with patch.dict(grimoired.os.environ, {"GRIMOIRE_TEST_PATH": "/tmp/custom-tool"}):
             path = grimoired.configured_path(

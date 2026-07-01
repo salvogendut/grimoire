@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -116,6 +117,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Prevent listened commands from executing.",
     )
     parser.add_argument(
+        "--check-asr",
+        action="store_true",
+        help="Check whether the configured speech recognizer and model are available.",
+    )
+    parser.add_argument(
         "--listen",
         action="store_true",
         help="Record one short utterance, transcribe it, and parse it.",
@@ -175,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.disarm_execution:
         return set_execution_mode(False)
 
+    if args.check_asr:
+        return check_asr(args.asr_command)
+
     if args.listen_loop:
         return listen_loop(args)
 
@@ -187,8 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.command:
         parser.error(
             "--command is required unless --list-windows, --list-apps, --listen, "
-            "--execution-mode, --arm-execution, --disarm-execution, --listen-loop, "
-            "--listen-service, or --audio-file is used"
+            "--execution-mode, --arm-execution, --disarm-execution, --check-asr, "
+            "--listen-loop, --listen-service, or --audio-file is used"
         )
 
     parsed = parse_transcript(args.command)
@@ -575,6 +584,69 @@ def transcribe_audio(audio_path: Path, tmpdir: Path, asr_command: str | None) ->
         raise SystemExit(f"whisper.cpp did not write transcript: {transcript_path}")
 
     return normalize_transcript(transcript_path.read_text(encoding="utf-8"))
+
+
+def check_asr(asr_command: str | None = None) -> int:
+    if asr_command:
+        return check_asr_command(asr_command)
+
+    whisper_cli = configured_path("GRIMOIRE_WHISPER_CLI", WHISPER_CPP_CANDIDATES)
+    whisper_model = configured_path("GRIMOIRE_WHISPER_MODEL", WHISPER_MODEL_CANDIDATES)
+
+    cli_ok = whisper_cli.exists()
+    model_ok = whisper_model.exists()
+
+    print_path_status("whisper-cli", whisper_cli, cli_ok)
+    if not cli_ok:
+        print(f"checked whisper-cli paths: {format_path_candidates(WHISPER_CPP_CANDIDATES)}")
+        print("hint: install whisper.cpp or set GRIMOIRE_WHISPER_CLI")
+
+    print_path_status("model", whisper_model, model_ok)
+    if not model_ok:
+        print(f"checked model paths: {format_path_candidates(WHISPER_MODEL_CANDIDATES)}")
+        print("hint: install ggml-base.en.bin or set GRIMOIRE_WHISPER_MODEL")
+
+    return 0 if cli_ok and model_ok else 1
+
+
+def check_asr_command(asr_command: str) -> int:
+    try:
+        command = shlex.split(asr_command.format(audio="/tmp/grimoire-check.wav"))
+    except (KeyError, ValueError) as error:
+        print(f"asr-command: invalid template: {error}")
+        return 1
+
+    if not command:
+        print("asr-command: empty")
+        return 1
+
+    executable = resolve_executable(command[0])
+    executable_ok = executable is not None
+    print(f"asr-command: {asr_command}")
+    print_path_status("asr-command executable", executable or Path(command[0]), executable_ok)
+
+    if "{audio}" not in asr_command:
+        print("warning: asr-command does not include {audio}")
+
+    if not executable_ok:
+        print("hint: install the ASR command or use an absolute executable path")
+        return 1
+
+    return 0
+
+
+def resolve_executable(command_name: str) -> Path | None:
+    command_path = Path(command_name)
+    if command_path.parent != Path("."):
+        return command_path if command_path.exists() else None
+
+    resolved = shutil.which(command_name)
+    return Path(resolved) if resolved else None
+
+
+def print_path_status(label: str, path: Path, ok: bool) -> None:
+    status = "found" if ok else "missing"
+    print(f"{label}: {status} {path}")
 
 
 def configured_path(env_name: str, candidates: tuple[Path, ...]) -> Path:

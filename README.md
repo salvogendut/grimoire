@@ -127,6 +127,12 @@ The first voice path uses a local `whisper.cpp` install if present at:
 /var/home/salvogendut/Dev/whisper.cpp/models/ggml-base.en.bin
 ```
 
+Check which recognizer binary and model Grimoire will use:
+
+```sh
+make check-asr
+```
+
 Transcribe an existing WAV without executing anything:
 
 ```sh
@@ -269,6 +275,12 @@ After installing the RPM, enable the extension and start the daemon service:
 ```sh
 gnome-extensions enable grimoire@salvogendut.github.io
 systemctl --user enable --now grimoired.service
+```
+
+Check the installed recognizer setup:
+
+```sh
+grimoired --check-asr
 ```
 
 The service is intentionally not enabled by default. When running, it starts

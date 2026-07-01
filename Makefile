@@ -14,7 +14,7 @@ GNOME_EXTENSION_DIR ?= $(DATADIR)/gnome-shell/extensions/$(EXTENSION_UUID)
 
 .PHONY: compile-extension-schemas install install-extension enable-extension disable-extension list-windows dry-focus-yellow \
 	arm-execution disarm-execution execution-mode start-daemon stop-daemon restart-daemon \
-	status-daemon logs-daemon test dist rpm
+	status-daemon logs-daemon check-asr test dist rpm
 
 compile-extension-schemas:
 	glib-compile-schemas "$(EXTENSION_SOURCE)/schemas"
@@ -45,6 +45,9 @@ disarm-execution:
 
 execution-mode:
 	python3 daemon/grimoired.py --execution-mode
+
+check-asr:
+	python3 daemon/grimoired.py --check-asr
 
 start-daemon:
 	systemctl --user start grimoired.service
