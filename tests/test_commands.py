@@ -395,3 +395,47 @@ class RuntimeConfigTests(TestCase):
             )
 
         self.assertEqual(path, candidate)
+
+    def test_parse_gdbus_boolean(self):
+        self.assertTrue(grimoired.parse_gdbus_boolean("(true,)"))
+        self.assertFalse(grimoired.parse_gdbus_boolean("(false,)"))
+
+    def test_execution_mode_enabled(self):
+        with patch.object(grimoired, "call_shell_boolean", return_value=(0, True)):
+            self.assertTrue(grimoired.execution_mode_enabled())
+
+    def test_call_shell_boolean_allows_false_result(self):
+        result = grimoired.subprocess.CompletedProcess(
+            args=["gdbus"],
+            returncode=0,
+            stdout="(false,)\n",
+            stderr="",
+        )
+
+        with patch.object(grimoired, "run_gdbus", return_value=result):
+            status, enabled = grimoired.call_shell_boolean("GetExecutionMode")
+
+        self.assertEqual(status, 0)
+        self.assertFalse(enabled)
+
+    def test_execution_mode_disabled_on_failed_call(self):
+        with patch.object(grimoired, "call_shell_boolean", return_value=(1, True)):
+            self.assertFalse(grimoired.execution_mode_enabled())
+
+    def test_should_execute_requires_execute_flag(self):
+        args = grimoired.argparse.Namespace(dry_run=False, execute_listen=False)
+
+        with patch.object(grimoired, "execution_mode_enabled", return_value=True):
+            self.assertFalse(grimoired.should_execute_listened_command(args, trace=False))
+
+    def test_should_execute_requires_shell_gate(self):
+        args = grimoired.argparse.Namespace(dry_run=False, execute_listen=True)
+
+        with patch.object(grimoired, "execution_mode_enabled", return_value=False):
+            self.assertFalse(grimoired.should_execute_listened_command(args, trace=False))
+
+    def test_should_execute_when_armed(self):
+        args = grimoired.argparse.Namespace(dry_run=False, execute_listen=True)
+
+        with patch.object(grimoired, "execution_mode_enabled", return_value=True):
+            self.assertTrue(grimoired.should_execute_listened_command(args, trace=False))

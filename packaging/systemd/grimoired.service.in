@@ -7,7 +7,7 @@ PartOf=graphical-session.target
 [Service]
 Type=simple
 EnvironmentFile=-%h/.config/grimoire/grimoired.env
-ExecStart=@BINDIR@/grimoired --listen-service --record-seconds 3
+ExecStart=@BINDIR@/grimoired --listen-service --execute-listen --record-seconds 3
 Restart=on-failure
 RestartSec=2
 

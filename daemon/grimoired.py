@@ -183,6 +183,9 @@ def listen_loop(args: argparse.Namespace) -> int:
             if args.dry_run:
                 continue
 
+            if not should_execute_listened_command(args, trace=not args.quiet):
+                continue
+
             if requires_confirmation(parsed) and not confirm_command(parsed):
                 print("skipped")
                 continue
@@ -204,8 +207,8 @@ def listen_service(args: argparse.Namespace) -> int:
                 parsed = listen_and_parse(args)
                 if not is_supported_command(parsed):
                     print("No supported command recognized.", file=sys.stderr)
-                elif args.dry_run or not args.execute_listen:
-                    pass
+                elif not should_execute_listened_command(args, trace=not args.quiet):
+                    continue
                 elif requires_confirmation(parsed):
                     print(
                         f"Skipped destructive command in service mode: "
@@ -250,6 +253,22 @@ class DaemonStatusHeartbeat:
 
 def update_daemon_status(running: bool) -> int:
     return call_shell_quiet("SetDaemonStatus", "true" if running else "false")
+
+
+def should_execute_listened_command(args: argparse.Namespace, trace: bool = True) -> bool:
+    if args.dry_run or not args.execute_listen:
+        return False
+
+    enabled = execution_mode_enabled()
+    if trace and not enabled:
+        print("execution disabled; click the Grimoire top-bar icon to arm")
+
+    return enabled
+
+
+def execution_mode_enabled() -> bool:
+    status, enabled = call_shell_boolean("GetExecutionMode")
+    return status == 0 and enabled
 
 
 def listen_once(args: argparse.Namespace) -> int:
@@ -660,6 +679,29 @@ def call_shell(method: str, *args: str) -> int:
 
 def call_shell_quiet(method: str, *args: str) -> int:
     return shell_status(run_gdbus(method, *args))
+
+
+def call_shell_boolean(method: str, *args: str) -> tuple[int, bool]:
+    result = run_gdbus(method, *args)
+    status = result.returncode
+    if status != 0:
+        return status, False
+
+    try:
+        return 0, parse_gdbus_boolean(result.stdout)
+    except (SyntaxError, ValueError, TypeError) as error:
+        print(f"Failed to parse {method} response: {error}", file=sys.stderr)
+        return 1, False
+
+
+def parse_gdbus_boolean(output: str) -> bool:
+    stripped = output.strip()
+    if stripped.startswith("(true"):
+        return True
+    if stripped.startswith("(false"):
+        return False
+
+    raise ValueError("expected a one-boolean DBus tuple")
 
 
 def run_gdbus(method: str, *args: str) -> subprocess.CompletedProcess[str]:

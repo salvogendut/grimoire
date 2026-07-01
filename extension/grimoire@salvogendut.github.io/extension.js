@@ -59,6 +59,13 @@ const DBUS_XML = `
       <arg type="b" name="running" direction="in"/>
       <arg type="b" name="ok" direction="out"/>
     </method>
+    <method name="GetExecutionMode">
+      <arg type="b" name="enabled" direction="out"/>
+    </method>
+    <method name="SetExecutionMode">
+      <arg type="b" name="enabled" direction="in"/>
+      <arg type="b" name="ok" direction="out"/>
+    </method>
     <signal name="WindowsChanged"/>
   </interface>
 </node>`;
@@ -171,22 +178,56 @@ class GrimoireDaemonIndicator extends PanelMenu.Button {
         GObject.registerClass(this);
     }
 
-    constructor() {
+    constructor(onToggleExecution) {
         super(0.0, 'Grimoire', true);
 
+        this._running = false;
+        this._executionEnabled = false;
+        this._onToggleExecution = onToggleExecution;
         this._icon = new St.Icon({
             icon_name: 'audio-input-microphone-symbolic',
             style_class: 'system-status-icon',
         });
         this.add_child(this._icon);
-        this.setRunning(false);
+        this.connect('button-press-event', () => {
+            this._onToggleExecution();
+            return Clutter.EVENT_STOP;
+        });
+        this.setState(false, false);
     }
 
     setRunning(running) {
-        this._icon.set_style(running ? 'color: #57e389;' : 'color: #8b8e91;');
+        this.setState(running, this._executionEnabled);
+    }
+
+    setExecutionEnabled(enabled) {
+        this.setState(this._running, enabled);
+    }
+
+    setState(running, executionEnabled) {
+        this._running = running;
+        this._executionEnabled = executionEnabled && running;
+
+        if (!running)
+            this._icon.set_style('color: #8b8e91;');
+        else if (this._executionEnabled)
+            this._icon.set_style('color: #57e389;');
+        else
+            this._icon.set_style('color: #f6d32d;');
+
         this.opacity = running ? 255 : 160;
         this.set_accessible_name(
-            running ? 'Grimoire daemon running' : 'Grimoire daemon inactive');
+            this._accessibleName());
+    }
+
+    _accessibleName() {
+        if (!this._running)
+            return 'Grimoire daemon inactive';
+
+        if (this._executionEnabled)
+            return 'Grimoire daemon armed';
+
+        return 'Grimoire daemon listening, execution disabled';
     }
 }
 
@@ -200,7 +241,9 @@ export default class GrimoireExtension extends Extension {
         this._daemonLastSeen = 0;
         this._daemonMonitorId = 0;
         this._daemonRunning = false;
-        this._indicator = new GrimoireDaemonIndicator();
+        this._executionEnabled = false;
+        this._indicator = new GrimoireDaemonIndicator(
+            () => this._toggleExecutionMode());
         Main.panel.addToStatusArea('grimoire-daemon', this._indicator);
         this._startDaemonMonitor();
 
@@ -240,6 +283,7 @@ export default class GrimoireExtension extends Extension {
         this._records = null;
         this._handleMemory = null;
         this._daemonLastSeen = 0;
+        this._executionEnabled = false;
     }
 
     ListWindows() {
@@ -343,8 +387,18 @@ export default class GrimoireExtension extends Extension {
         } else {
             this._daemonLastSeen = 0;
             this._setDaemonRunning(false);
+            this._setExecutionEnabled(false);
         }
 
+        return true;
+    }
+
+    GetExecutionMode() {
+        return this._executionEnabled && this._daemonRunning;
+    }
+
+    SetExecutionMode(enabled) {
+        this._setExecutionEnabled(enabled);
         return true;
     }
 
@@ -357,8 +411,10 @@ export default class GrimoireExtension extends Extension {
                 if (
                     this._daemonLastSeen &&
                     Date.now() - this._daemonLastSeen > DAEMON_HEARTBEAT_TIMEOUT_MS
-                )
+                ) {
                     this._setDaemonRunning(false);
+                    this._setExecutionEnabled(false);
+                }
 
                 return GLib.SOURCE_CONTINUE;
             });
@@ -374,7 +430,21 @@ export default class GrimoireExtension extends Extension {
 
     _setDaemonRunning(running) {
         this._daemonRunning = running;
-        this._indicator?.setRunning(running);
+        this._indicator?.setState(running, this._executionEnabled);
+    }
+
+    _setExecutionEnabled(enabled) {
+        this._executionEnabled = enabled && this._daemonRunning;
+        this._indicator?.setExecutionEnabled(this._executionEnabled);
+    }
+
+    _toggleExecutionMode() {
+        if (!this._daemonRunning) {
+            this._setExecutionEnabled(false);
+            return;
+        }
+
+        this._setExecutionEnabled(!this._executionEnabled);
     }
 
     _exportDbus() {

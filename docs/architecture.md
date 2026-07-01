@@ -32,6 +32,7 @@ Responsibilities:
 - Track manageable `Meta.Window` instances.
 - Draw one colored frame and bird-name tab per tracked window.
 - Show a top-bar daemon status indicator based on daemon heartbeats.
+- Let the top-bar indicator arm or disarm listened command execution.
 - Maintain a handle-to-window registry.
 - Expose a session-bus API for window inventory and commands.
 - Execute compositor-native actions: focus, close, minimize, maximize, and
@@ -61,6 +62,8 @@ Responsibilities:
 - Call the extension over DBus.
 - Send a heartbeat while listening so the shell indicator can show whether the
   daemon is currently running.
+- Check the shell-owned execution gate before dispatching any continuously
+  listened command.
 - Eventually manage wake word or push-to-talk activation.
 
 First implementation:

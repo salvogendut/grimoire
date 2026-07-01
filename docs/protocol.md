@@ -111,6 +111,17 @@ Updates the GNOME top-bar daemon indicator. The daemon sends `true` repeatedly
 while it is listening and sends `false` on graceful shutdown. The extension also
 expires the active state automatically if heartbeats stop.
 
+### `GetExecutionMode() -> b`
+
+Returns whether the daemon is currently allowed to execute listened commands.
+The daemon checks this immediately before dispatching a recognized command.
+
+### `SetExecutionMode(b enabled) -> b`
+
+Sets the execution gate used by `GetExecutionMode`. The top-bar icon toggles
+this value. The extension forces it off when the daemon is inactive or the
+heartbeat expires.
+
 ## Signals
 
 ### `WindowsChanged()`

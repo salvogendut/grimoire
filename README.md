@@ -183,9 +183,15 @@ python3 daemon/grimoired.py --listen-service --execute-listen --record-seconds 3
 ```
 
 While `--listen-loop` or `--listen-service` is running, the daemon sends a
-heartbeat to the GNOME Shell extension. The top-bar icon turns active while the
-heartbeat is fresh and automatically falls back to inactive if the daemon exits
-or crashes.
+heartbeat to the GNOME Shell extension. The top-bar icon shows the current
+state:
+
+- Gray: daemon inactive.
+- Yellow: daemon listening, execution disabled.
+- Green: daemon listening and armed for execution.
+
+Click the icon to toggle between yellow and green. The daemon checks this armed
+state immediately before dispatching a listened command.
 
 You can override the recognizer with an ASR command template:
 
@@ -231,11 +237,10 @@ gnome-extensions enable grimoire@salvogendut.github.io
 systemctl --user enable --now grimoired.service
 ```
 
-The service is intentionally not enabled by default. It also starts in
-parse-only mode, so it can prove the microphone, recognizer, heartbeat, and
-status icon path without executing background speech. Use the manual
-`--listen-loop --execute-listen` path for command execution until Grimoire has a
-wake word or push-to-talk gate.
+The service is intentionally not enabled by default. When running, it starts
+disarmed: it can prove the microphone, recognizer, heartbeat, and status icon
+path without executing background speech. Click the top-bar icon to arm
+execution for the current daemon session.
 
 ## Design Direction
 
