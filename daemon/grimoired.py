@@ -13,10 +13,15 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 
 if __package__:
     from .grimoire.commands import (
+        HANDLE_NAMES,
         ParsedCommand,
+        WINDOW_ACTIONS,
         is_supported_command,
         normalize_dictation_input,
         parse_transcript,
@@ -24,7 +29,9 @@ if __package__:
     )
 else:
     from grimoire.commands import (
+        HANDLE_NAMES,
         ParsedCommand,
+        WINDOW_ACTIONS,
         is_supported_command,
         normalize_dictation_input,
         parse_transcript,
@@ -49,6 +56,15 @@ WHISPER_MODEL_CANDIDATES = (
 )
 RECORD_RATE = 16000
 DAEMON_STATUS_INTERVAL_SECONDS = 2.0
+AI_MODE_OFF = "off"
+AI_MODE_FALLBACK = "fallback"
+AI_MODE_VALIDATE = "validate"
+AI_MODES = (AI_MODE_OFF, AI_MODE_FALLBACK, AI_MODE_VALIDATE)
+AI_PROVIDER_OPENAI = "openai"
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_AI_MIN_CONFIDENCE = 0.65
+AI_REQUEST_TIMEOUT_SECONDS = 12.0
 DAEMON_STATE_INACTIVE = "inactive"
 DAEMON_STATE_IDLE = "idle"
 DAEMON_STATE_RECORDING = "recording"
@@ -122,6 +138,29 @@ def main(argv: list[str] | None = None) -> int:
         help="Check whether the configured speech recognizer and model are available.",
     )
     parser.add_argument(
+        "--check-ai",
+        action="store_true",
+        help="Check whether the configured AI interpreter is available.",
+    )
+    parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Use the configured AI interpreter when parser fallback is needed.",
+    )
+    parser.add_argument(
+        "--ai-mode",
+        choices=AI_MODES,
+        help=(
+            "AI interpreter mode. Defaults to GRIMOIRE_AI_MODE or off. "
+            "--ai is a shortcut for fallback."
+        ),
+    )
+    parser.add_argument(
+        "--ai-dry-run",
+        action="store_true",
+        help="Parse through the AI layer and print the result without dispatching.",
+    )
+    parser.add_argument(
         "--listen",
         action="store_true",
         help="Record one short utterance, transcribe it, and parse it.",
@@ -184,6 +223,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_asr:
         return check_asr(args.asr_command)
 
+    if args.check_ai:
+        return check_ai()
+
     if args.listen_loop:
         return listen_loop(args)
 
@@ -197,15 +239,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "--command is required unless --list-windows, --list-apps, --listen, "
             "--execution-mode, --arm-execution, --disarm-execution, --check-asr, "
-            "--listen-loop, --listen-service, or --audio-file is used"
+            "--check-ai, --listen-loop, --listen-service, or --audio-file is used"
         )
 
-    parsed = parse_transcript(args.command)
+    parsed = parse_with_optional_ai(args.command, args)
     trace = not args.quiet
     if trace:
         trace_recognition(args.command, parsed)
 
-    if args.dry_run:
+    if args.dry_run or args.ai_dry_run:
         if not trace:
             print(parsed)
         return 0
@@ -403,6 +445,316 @@ def format_status_detail(detail: object) -> str:
     return f"{text[:MAX_DAEMON_STATUS_DETAIL_LENGTH - 3]}..."
 
 
+def parse_with_optional_ai(transcript: str, args: argparse.Namespace) -> ParsedCommand:
+    parsed = parse_transcript(transcript)
+    mode = ai_mode_from_args(args)
+
+    if mode == AI_MODE_OFF:
+        return parsed
+
+    if mode == AI_MODE_FALLBACK and is_supported_command(parsed):
+        return parsed
+
+    try:
+        ai_parsed = interpret_command_with_ai(transcript, parsed, mode)
+    except SystemExit:
+        raise
+    except Exception as error:
+        print(f"AI interpreter failed: {error}", file=sys.stderr)
+        if mode == AI_MODE_VALIDATE:
+            return ParsedCommand(intent="unknown", text=transcript)
+        return parsed
+
+    if is_supported_command(ai_parsed):
+        return ai_parsed
+
+    if mode == AI_MODE_VALIDATE:
+        return ai_parsed
+
+    return parsed
+
+
+def ai_mode_from_args(args: argparse.Namespace) -> str:
+    if getattr(args, "ai_dry_run", False):
+        return normalize_ai_mode(getattr(args, "ai_mode", None) or os.environ.get("GRIMOIRE_AI_MODE") or AI_MODE_FALLBACK)
+
+    if getattr(args, "ai", False):
+        return normalize_ai_mode(getattr(args, "ai_mode", None) or os.environ.get("GRIMOIRE_AI_MODE") or AI_MODE_FALLBACK)
+
+    return normalize_ai_mode(getattr(args, "ai_mode", None) or os.environ.get("GRIMOIRE_AI_MODE") or AI_MODE_OFF)
+
+
+def normalize_ai_mode(mode: str | None) -> str:
+    normalized = (mode or AI_MODE_OFF).strip().lower()
+    if normalized not in AI_MODES:
+        raise SystemExit(f"Unsupported AI mode: {mode}")
+
+    return normalized
+
+
+def interpret_command_with_ai(transcript: str, deterministic: ParsedCommand, mode: str) -> ParsedCommand:
+    provider = os.environ.get("GRIMOIRE_AI_PROVIDER", AI_PROVIDER_OPENAI).strip().lower()
+    if provider != AI_PROVIDER_OPENAI:
+        raise SystemExit(f"Unsupported AI provider: {provider}")
+
+    payload = call_openai_interpreter(transcript, deterministic, mode)
+    return parsed_command_from_ai_payload(payload, transcript)
+
+
+def check_ai() -> int:
+    provider = os.environ.get("GRIMOIRE_AI_PROVIDER", AI_PROVIDER_OPENAI).strip().lower()
+    if provider != AI_PROVIDER_OPENAI:
+        print(f"ai-provider: unsupported {provider}")
+        return 1
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    model = os.environ.get("GRIMOIRE_OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip()
+    base_url = openai_base_url()
+    print(f"ai-provider: {provider}")
+    print(f"openai-model: {model}")
+    print(f"openai-base-url: {base_url}")
+    print(f"openai-api-key: {'set' if api_key else 'missing'}")
+
+    try:
+        validate_ai_base_url(base_url)
+    except ValueError as error:
+        print(f"openai-base-url: invalid: {error}")
+        return 1
+
+    return 0 if api_key else 1
+
+
+def call_openai_interpreter(transcript: str, deterministic: ParsedCommand, mode: str) -> dict[str, object]:
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise SystemExit("OPENAI_API_KEY is required for the OpenAI AI interpreter")
+
+    base_url = openai_base_url()
+    validate_ai_base_url(base_url)
+    endpoint = f"{base_url.rstrip('/')}/responses"
+    model = os.environ.get("GRIMOIRE_OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip() or DEFAULT_OPENAI_MODEL
+    request = {
+        "model": model,
+        "instructions": ai_interpreter_instructions(),
+        "input": json.dumps(
+            ai_interpreter_input(transcript, deterministic, mode),
+            ensure_ascii=False,
+        ),
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "grimoire_command",
+                "strict": True,
+                "schema": ai_interpreter_schema(),
+            },
+        },
+    }
+    body = json.dumps(request, ensure_ascii=False).encode("utf-8")
+    http_request = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(http_request, timeout=AI_REQUEST_TIMEOUT_SECONDS) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as error:
+        message = error.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"OpenAI interpreter request failed: HTTP {error.code}: {message}") from error
+    except urllib.error.URLError as error:
+        raise SystemExit(f"OpenAI interpreter request failed: {error}") from error
+
+    try:
+        response_payload = json.loads(raw)
+        output_text = extract_openai_output_text(response_payload)
+        parsed = json.loads(output_text)
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"OpenAI interpreter returned invalid JSON: {error}") from error
+
+    if not isinstance(parsed, dict):
+        raise SystemExit("OpenAI interpreter returned a non-object JSON payload")
+
+    return parsed
+
+
+def openai_base_url() -> str:
+    return os.environ.get("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL).strip() or DEFAULT_OPENAI_BASE_URL
+
+
+def validate_ai_base_url(base_url: str) -> None:
+    parsed = urllib.parse.urlparse(base_url)
+    host = (parsed.hostname or "").lower()
+
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("base URL must include a scheme and host")
+
+    if parsed.scheme == "https":
+        return
+
+    if parsed.scheme == "http" and host in {"localhost", "127.0.0.1", "::1"}:
+        return
+
+    raise ValueError("cloud AI endpoints must use HTTPS; plain HTTP is allowed only for localhost")
+
+
+def ai_interpreter_instructions() -> str:
+    return (
+        "You translate noisy ASR transcripts into one Grimoire command. "
+        "Return only JSON matching the schema. Do not invent handles or actions. "
+        "Use unknown when the transcript is ambiguous or unsafe."
+    )
+
+
+def ai_interpreter_input(transcript: str, deterministic: ParsedCommand, mode: str) -> dict[str, object]:
+    return {
+        "transcript": transcript,
+        "mode": mode,
+        "deterministic_parse": parsed_command_to_payload(deterministic),
+        "allowed_window_actions": list(WINDOW_ACTIONS),
+        "allowed_handles": list(HANDLE_NAMES),
+        "allowed_inventory_actions": ["windows", "apps"],
+        "allowed_handle_actions": ["refresh"],
+        "privacy_note": "No window titles or screenshots are included.",
+    }
+
+
+def ai_interpreter_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["intent", "action", "handle", "app", "text", "confidence", "reason"],
+        "properties": {
+            "intent": {
+                "type": "string",
+                "enum": ["window", "app", "inventory", "handles", "dictate", "unknown"],
+            },
+            "action": {
+                "type": ["string", "null"],
+                "enum": [
+                    "focus",
+                    "close",
+                    "minimize",
+                    "unminimize",
+                    "maximize",
+                    "unmaximize",
+                    "fullscreen",
+                    "unfullscreen",
+                    "open",
+                    "windows",
+                    "apps",
+                    "refresh",
+                    None,
+                ],
+            },
+            "handle": {
+                "type": ["string", "null"],
+                "enum": [*HANDLE_NAMES, None],
+            },
+            "app": {"type": ["string", "null"]},
+            "text": {"type": ["string", "null"]},
+            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+            "reason": {"type": "string"},
+        },
+    }
+
+
+def extract_openai_output_text(response_payload: dict[str, object]) -> str:
+    output_text = response_payload.get("output_text")
+    if isinstance(output_text, str):
+        return output_text
+
+    chunks: list[str] = []
+    output = response_payload.get("output")
+    if isinstance(output, list):
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                text = part.get("text")
+                if isinstance(text, str):
+                    chunks.append(text)
+
+    if chunks:
+        return "".join(chunks)
+
+    raise ValueError("missing output_text")
+
+
+def parsed_command_from_ai_payload(payload: dict[str, object], transcript: str) -> ParsedCommand:
+    confidence = payload.get("confidence", 0)
+    if not isinstance(confidence, (int, float)):
+        confidence = 0
+
+    min_confidence = ai_min_confidence()
+    if confidence < min_confidence:
+        return ParsedCommand(intent="unknown", text=transcript)
+
+    intent = clean_ai_string(payload.get("intent"), lower=True)
+    action = clean_ai_string(payload.get("action"), lower=True)
+    handle = clean_ai_string(payload.get("handle"), lower=True)
+    app = clean_ai_string(payload.get("app"))
+    text = clean_ai_string(payload.get("text"))
+
+    if intent == "window" and action in WINDOW_ACTIONS and handle in HANDLE_NAMES:
+        return ParsedCommand(intent="window", action=action, handle=handle)
+
+    if intent == "app" and action == "open" and app:
+        return ParsedCommand(intent="app", action="open", app=app)
+
+    if intent == "inventory" and action in {"windows", "apps"}:
+        return ParsedCommand(intent="inventory", action=action)
+
+    if intent == "handles" and action == "refresh":
+        return ParsedCommand(intent="handles", action="refresh")
+
+    if intent == "dictate" and text:
+        if handle is not None and handle not in HANDLE_NAMES:
+            return ParsedCommand(intent="unknown", text=transcript)
+        return ParsedCommand(intent="dictate", handle=handle, text=text)
+
+    return ParsedCommand(intent="unknown", text=transcript)
+
+
+def ai_min_confidence() -> float:
+    raw = os.environ.get("GRIMOIRE_AI_MIN_CONFIDENCE", str(DEFAULT_AI_MIN_CONFIDENCE))
+    try:
+        return max(0.0, min(1.0, float(raw)))
+    except ValueError:
+        return DEFAULT_AI_MIN_CONFIDENCE
+
+
+def clean_ai_string(value: object, lower: bool = False) -> str | None:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    return text.lower() if lower else text
+
+
+def parsed_command_to_payload(parsed: ParsedCommand) -> dict[str, object]:
+    return {
+        "intent": parsed.intent,
+        "action": parsed.action,
+        "handle": parsed.handle,
+        "app": parsed.app,
+        "text": parsed.text,
+        "supported": is_supported_command(parsed),
+    }
+
+
 def should_execute_listened_command(args: argparse.Namespace, trace: bool = True) -> bool:
     if args.dry_run or not args.execute_listen:
         return False
@@ -479,7 +831,7 @@ def listen_and_parse(args: argparse.Namespace) -> ParsedCommand:
         set_daemon_state(DAEMON_STATE_TRANSCRIBING, audio_path.name)
         transcript = transcribe_audio(audio_path, tmpdir, args.asr_command)
         set_daemon_state(DAEMON_STATE_PARSING, transcript)
-        parsed = parse_transcript(transcript)
+        parsed = parse_with_optional_ai(transcript, args)
         set_daemon_state(DAEMON_STATE_PARSED, describe_parsed_command(parsed))
 
         if not args.quiet:

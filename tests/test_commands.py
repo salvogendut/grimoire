@@ -464,6 +464,117 @@ class RuntimeConfigTests(TestCase):
         self.assertIn("asr-command: ", output.getvalue())
         self.assertIn("asr-command executable: found", output.getvalue())
 
+    def test_ai_mode_defaults_off(self):
+        args = grimoired.argparse.Namespace(ai=False, ai_dry_run=False, ai_mode=None)
+
+        with patch.dict(grimoired.os.environ, {}, clear=True):
+            self.assertEqual(grimoired.ai_mode_from_args(args), "off")
+
+    def test_ai_flag_defaults_to_fallback(self):
+        args = grimoired.argparse.Namespace(ai=True, ai_dry_run=False, ai_mode=None)
+
+        with patch.dict(grimoired.os.environ, {}, clear=True):
+            self.assertEqual(grimoired.ai_mode_from_args(args), "fallback")
+
+    def test_parse_with_ai_fallback_skips_supported_deterministic_parse(self):
+        args = grimoired.argparse.Namespace(ai=True, ai_dry_run=False, ai_mode=None)
+
+        with patch.object(grimoired, "interpret_command_with_ai") as interpret:
+            parsed = grimoired.parse_with_optional_ai("focus dove", args)
+
+        self.assertEqual(parsed, ParsedCommand(intent="window", action="focus", handle="dove"))
+        interpret.assert_not_called()
+
+    def test_parse_with_ai_fallback_uses_ai_for_unknown(self):
+        args = grimoired.argparse.Namespace(ai=True, ai_dry_run=False, ai_mode=None)
+        ai_parsed = ParsedCommand(intent="window", action="minimize", handle="dove")
+
+        with patch.object(grimoired, "interpret_command_with_ai", return_value=ai_parsed):
+            parsed = grimoired.parse_with_optional_ai("put dove away", args)
+
+        self.assertEqual(parsed, ai_parsed)
+
+    def test_parse_with_ai_validate_blocks_failed_ai_validation(self):
+        args = grimoired.argparse.Namespace(ai=False, ai_dry_run=False, ai_mode="validate")
+        ai_parsed = ParsedCommand(intent="unknown", text="focus dove")
+
+        with patch.object(grimoired, "interpret_command_with_ai", return_value=ai_parsed):
+            parsed = grimoired.parse_with_optional_ai("focus dove", args)
+
+        self.assertEqual(parsed.intent, "unknown")
+
+    def test_ai_payload_validates_allowed_window_command(self):
+        parsed = grimoired.parsed_command_from_ai_payload(
+            {
+                "intent": "window",
+                "action": "minimize",
+                "handle": "dove",
+                "app": None,
+                "text": None,
+                "confidence": 0.9,
+                "reason": "dove away means minimize",
+            },
+            "put dove away",
+        )
+
+        self.assertEqual(parsed, ParsedCommand(intent="window", action="minimize", handle="dove"))
+
+    def test_ai_payload_rejects_low_confidence(self):
+        parsed = grimoired.parsed_command_from_ai_payload(
+            {
+                "intent": "window",
+                "action": "minimize",
+                "handle": "dove",
+                "app": None,
+                "text": None,
+                "confidence": 0.2,
+                "reason": "not sure",
+            },
+            "put dove away",
+        )
+
+        self.assertEqual(parsed.intent, "unknown")
+
+    def test_ai_payload_preserves_dictation_text_case(self):
+        parsed = grimoired.parsed_command_from_ai_payload(
+            {
+                "intent": "dictate",
+                "action": None,
+                "handle": "dove",
+                "app": None,
+                "text": "Makefile target",
+                "confidence": 0.9,
+                "reason": "dictation",
+            },
+            "type dove Makefile target",
+        )
+
+        self.assertEqual(
+            parsed,
+            ParsedCommand(intent="dictate", handle="dove", text="Makefile target"),
+        )
+
+    def test_validate_ai_base_url_requires_https_for_cloud(self):
+        with self.assertRaises(ValueError):
+            grimoired.validate_ai_base_url("http://api.openai.com/v1")
+
+    def test_validate_ai_base_url_allows_local_http(self):
+        grimoired.validate_ai_base_url("http://localhost:11434/v1")
+
+    def test_validate_ai_base_url_rejects_malformed_url(self):
+        with self.assertRaises(ValueError):
+            grimoired.validate_ai_base_url("https://")
+
+    def test_check_ai_reports_missing_key(self):
+        output = io.StringIO()
+
+        with patch.dict(grimoired.os.environ, {"OPENAI_API_KEY": ""}, clear=True):
+            with redirect_stdout(output):
+                status = grimoired.check_ai()
+
+        self.assertEqual(status, 1)
+        self.assertIn("openai-api-key: missing", output.getvalue())
+
     def test_configured_path_prefers_environment(self):
         with patch.dict(grimoired.os.environ, {"GRIMOIRE_TEST_PATH": "/tmp/custom-tool"}):
             path = grimoired.configured_path(

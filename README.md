@@ -239,6 +239,53 @@ You can override the recognizer with an ASR command template:
 python3 daemon/grimoired.py --audio-file sample.wav --asr-command "my-asr {audio}"
 ```
 
+## AI Interpreter
+
+Grimoire can optionally send a transcript through an AI interpreter before
+execution. The AI layer is not an executor: it can only return a structured
+intent, and the daemon validates that intent against the local allowlist of
+actions and handles before dispatching anything.
+
+Modes:
+
+- `off`: deterministic parser only.
+- `fallback`: use AI only when the deterministic parser does not understand the
+  transcript.
+- `validate`: ask AI to validate/normalize even when the deterministic parser
+  succeeds.
+
+Try it without executing:
+
+```sh
+python3 daemon/grimoired.py --command "put dove away" --ai-dry-run
+```
+
+Enable fallback mode for a command:
+
+```sh
+python3 daemon/grimoired.py --command "put dove away" --ai --dry-run
+```
+
+Check AI configuration:
+
+```sh
+make check-ai
+```
+
+The first provider is OpenAI's Responses API. Configure it with:
+
+```sh
+GRIMOIRE_AI_PROVIDER=openai
+OPENAI_API_KEY=...
+GRIMOIRE_OPENAI_MODEL=gpt-4o-mini
+```
+
+`OPENAI_BASE_URL` must use HTTPS unless it points to localhost. This protects
+the transcript in transit, but it is not end-to-end encryption: a cloud model
+must receive the transcript in readable form to interpret it. Grimoire sends
+only minimal context by default: transcript, allowed actions, allowed handles,
+and deterministic parser output. It does not send screenshots or window titles.
+
 For service installs, put recognizer overrides in:
 
 ```text
@@ -250,6 +297,10 @@ Example:
 ```sh
 GRIMOIRE_WHISPER_CLI=/usr/bin/whisper-cli
 GRIMOIRE_WHISPER_MODEL=/home/salvogendut/.local/share/grimoire/models/ggml-base.en.bin
+GRIMOIRE_AI_PROVIDER=openai
+OPENAI_API_KEY=...
+GRIMOIRE_AI_MODE=fallback
+GRIMOIRE_OPENAI_MODEL=gpt-4o-mini
 ```
 
 ## Packaging

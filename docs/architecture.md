@@ -61,6 +61,8 @@ Responsibilities:
 - Capture microphone audio through PipeWire/PulseAudio.
 - Run voice activity detection and speech recognition.
 - Convert transcripts into structured intents.
+- Optionally pass transcripts through an AI interpreter in fallback or
+  validation mode, then validate the result locally before execution.
 - Call the extension over DBus.
 - Send phase updates while listening so the shell indicator can show whether
   the daemon is idle, recording, transcribing, parsing, executing, blocked, or
@@ -99,6 +101,15 @@ authority itself. For example:
 ```text
 "put the yellow terminal on the left" -> { action: "tile_left", color: "yellow" }
 ```
+
+The first AI layer is intentionally constrained:
+
+- It is opt-in.
+- It receives minimal context: transcript, allowed actions, allowed handles, and
+  deterministic parser output.
+- Cloud provider endpoints must use HTTPS; plain HTTP is allowed only for
+  localhost/local models.
+- Returned intents are accepted only after local allowlist validation.
 
 The daemon should log transcript, parsed intent, confidence, and executed action
 so mistakes can be diagnosed.
