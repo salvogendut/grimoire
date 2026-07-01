@@ -19,6 +19,8 @@ The current prototype covers focus/window management by color or bird handle,
 application launching, and clipboard-paste dictation with terminal-aware Enter
 handling. Window handles are remembered by app/title where possible, so a
 reopened window can keep the same bird/color if that handle is still available.
+The top GNOME bar shows a microphone status icon while the listener daemon is
+heartbeating.
 
 ## Screenshots
 
@@ -174,11 +176,63 @@ Only execute listened commands when you explicitly opt in:
 python3 daemon/grimoired.py --listen --record-seconds 3 --execute-listen
 ```
 
+Run the non-interactive service loop used by the systemd user unit:
+
+```sh
+python3 daemon/grimoired.py --listen-service --execute-listen --record-seconds 3
+```
+
+While `--listen-loop` or `--listen-service` is running, the daemon sends a
+heartbeat to the GNOME Shell extension. The top-bar icon turns active while the
+heartbeat is fresh and automatically falls back to inactive if the daemon exits
+or crashes.
+
 You can override the recognizer with an ASR command template:
 
 ```sh
 python3 daemon/grimoired.py --audio-file sample.wav --asr-command "my-asr {audio}"
 ```
+
+For service installs, put recognizer overrides in:
+
+```text
+~/.config/grimoire/grimoired.env
+```
+
+Example:
+
+```sh
+GRIMOIRE_WHISPER_CLI=/usr/bin/whisper-cli
+GRIMOIRE_WHISPER_MODEL=/home/salvogendut/.local/share/grimoire/models/ggml-base.en.bin
+```
+
+## Packaging
+
+The repository has a plain install target and a first Fedora RPM spec. The
+package layout is:
+
+- `/usr/share/gnome-shell/extensions/grimoire@salvogendut.github.io`: GNOME
+  Shell extension.
+- `/usr/bin/grimoired`: daemon command wrapper.
+- `/usr/libexec/grimoire`: Python daemon implementation.
+- `/usr/lib/systemd/user/grimoired.service`: disabled user service.
+
+Build a source archive and RPM locally:
+
+```sh
+make dist
+make rpm
+```
+
+After installing the RPM, enable the extension and start the daemon service:
+
+```sh
+gnome-extensions enable grimoire@salvogendut.github.io
+systemctl --user enable --now grimoired.service
+```
+
+The service is intentionally not enabled by default. It needs a working local
+recognizer and microphone path first.
 
 ## Design Direction
 

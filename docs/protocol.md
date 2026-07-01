@@ -105,6 +105,12 @@ Forces the extension to rescan windows and reposition frames.
 Clears remembered handle assignments and deliberately reassigns handles for the
 currently visible windows.
 
+### `SetDaemonStatus(b running) -> b`
+
+Updates the GNOME top-bar daemon indicator. The daemon sends `true` repeatedly
+while it is listening and sends `false` on graceful shutdown. The extension also
+expires the active state automatically if heartbeats stop.
+
 ## Signals
 
 ### `WindowsChanged()`

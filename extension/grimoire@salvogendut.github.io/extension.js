@@ -1,10 +1,13 @@
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
+import GObject from 'gi://GObject';
 import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 
 const BUS_NAME = 'org.grimoire.Shell';
 const OBJECT_PATH = '/org/grimoire/Shell';
@@ -52,6 +55,10 @@ const DBUS_XML = `
     <method name="RefreshHandles">
       <arg type="b" name="ok" direction="out"/>
     </method>
+    <method name="SetDaemonStatus">
+      <arg type="b" name="running" direction="in"/>
+      <arg type="b" name="ok" direction="out"/>
+    </method>
     <signal name="WindowsChanged"/>
   </interface>
 </node>`;
@@ -66,6 +73,8 @@ const HORIZONTAL_TAB_HEIGHT = 34;
 const HORIZONTAL_TAB_MIN_WIDTH = 116;
 const HORIZONTAL_TAB_LETTER_WIDTH = 11;
 const HORIZONTAL_TAB_RIGHT_INSET = 0;
+const DAEMON_HEARTBEAT_TIMEOUT_MS = 6000;
+const DAEMON_WATCH_INTERVAL_SECONDS = 2;
 const KEY_PAUSE_MS = 15;
 
 const PALETTE = [
@@ -157,6 +166,30 @@ function handleMemory() {
     return globalThis.__grimoireHandleMemory;
 }
 
+class GrimoireDaemonIndicator extends PanelMenu.Button {
+    static {
+        GObject.registerClass(this);
+    }
+
+    constructor() {
+        super(0.0, 'Grimoire', true);
+
+        this._icon = new St.Icon({
+            icon_name: 'audio-input-microphone-symbolic',
+            style_class: 'system-status-icon',
+        });
+        this.add_child(this._icon);
+        this.setRunning(false);
+    }
+
+    setRunning(running) {
+        this._icon.set_style(running ? 'color: #57e389;' : 'color: #8b8e91;');
+        this.opacity = running ? 255 : 160;
+        this.set_accessible_name(
+            running ? 'Grimoire daemon running' : 'Grimoire daemon inactive');
+    }
+}
+
 export default class GrimoireExtension extends Extension {
     enable() {
         this._records = new Map();
@@ -164,6 +197,12 @@ export default class GrimoireExtension extends Extension {
         this._dbusImpl = null;
         this._appSystem = Shell.AppSystem.get_default();
         this._handleMemory = handleMemory();
+        this._daemonLastSeen = 0;
+        this._daemonMonitorId = 0;
+        this._daemonRunning = false;
+        this._indicator = new GrimoireDaemonIndicator();
+        Main.panel.addToStatusArea('grimoire-daemon', this._indicator);
+        this._startDaemonMonitor();
 
         this._exportDbus();
 
@@ -188,6 +227,10 @@ export default class GrimoireExtension extends Extension {
         global.window_manager.disconnectObject(this);
         global.display.disconnectObject(this);
 
+        this._stopDaemonMonitor();
+        this._indicator?.destroy();
+        this._indicator = null;
+
         this._unexportDbus();
         this._appSystem = null;
 
@@ -196,6 +239,7 @@ export default class GrimoireExtension extends Extension {
 
         this._records = null;
         this._handleMemory = null;
+        this._daemonLastSeen = 0;
     }
 
     ListWindows() {
@@ -290,6 +334,47 @@ export default class GrimoireExtension extends Extension {
 
         this._syncWindows();
         return true;
+    }
+
+    SetDaemonStatus(running) {
+        if (running) {
+            this._daemonLastSeen = Date.now();
+            this._setDaemonRunning(true);
+        } else {
+            this._daemonLastSeen = 0;
+            this._setDaemonRunning(false);
+        }
+
+        return true;
+    }
+
+    _startDaemonMonitor() {
+        this._stopDaemonMonitor();
+        this._daemonMonitorId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT,
+            DAEMON_WATCH_INTERVAL_SECONDS,
+            () => {
+                if (
+                    this._daemonLastSeen &&
+                    Date.now() - this._daemonLastSeen > DAEMON_HEARTBEAT_TIMEOUT_MS
+                )
+                    this._setDaemonRunning(false);
+
+                return GLib.SOURCE_CONTINUE;
+            });
+    }
+
+    _stopDaemonMonitor() {
+        if (!this._daemonMonitorId)
+            return;
+
+        GLib.source_remove(this._daemonMonitorId);
+        this._daemonMonitorId = 0;
+    }
+
+    _setDaemonRunning(running) {
+        this._daemonRunning = running;
+        this._indicator?.setRunning(running);
     }
 
     _exportDbus() {

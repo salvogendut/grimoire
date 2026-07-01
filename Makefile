@@ -2,8 +2,15 @@ EXTENSION_UUID := grimoire@salvogendut.github.io
 EXTENSION_SOURCE := extension/$(EXTENSION_UUID)
 EXTENSION_TARGET := $(HOME)/.local/share/gnome-shell/extensions/$(EXTENSION_UUID)
 EXTENSION_BUNDLE := build/$(EXTENSION_UUID).shell-extension.zip
+VERSION ?= 0.1.0
+PREFIX ?= /usr
+BINDIR ?= $(PREFIX)/bin
+LIBEXECDIR ?= $(PREFIX)/libexec/grimoire
+DATADIR ?= $(PREFIX)/share
+SYSTEMD_USER_UNIT_DIR ?= $(PREFIX)/lib/systemd/user
+GNOME_EXTENSION_DIR ?= $(DATADIR)/gnome-shell/extensions/$(EXTENSION_UUID)
 
-.PHONY: install-extension enable-extension disable-extension list-windows dry-focus-yellow test
+.PHONY: install install-extension enable-extension disable-extension list-windows dry-focus-yellow test dist rpm
 
 install-extension:
 	mkdir -p build
@@ -25,3 +32,26 @@ dry-focus-yellow:
 
 test:
 	python3 -m unittest discover -s tests
+
+install:
+	install -d "$(DESTDIR)$(BINDIR)"
+	install -d "$(DESTDIR)$(LIBEXECDIR)/grimoire"
+	install -d "$(DESTDIR)$(GNOME_EXTENSION_DIR)"
+	install -d "$(DESTDIR)$(SYSTEMD_USER_UNIT_DIR)"
+	install -m 0755 daemon/grimoired.py "$(DESTDIR)$(LIBEXECDIR)/grimoired.py"
+	install -m 0644 daemon/grimoire/__init__.py daemon/grimoire/commands.py "$(DESTDIR)$(LIBEXECDIR)/grimoire/"
+	install -m 0644 "$(EXTENSION_SOURCE)/extension.js" "$(EXTENSION_SOURCE)/metadata.json" "$(EXTENSION_SOURCE)/stylesheet.css" "$(DESTDIR)$(GNOME_EXTENSION_DIR)/"
+	sed "s|@LIBEXECDIR@|$(LIBEXECDIR)|g" packaging/bin/grimoired.in > "$(DESTDIR)$(BINDIR)/grimoired"
+	chmod 0755 "$(DESTDIR)$(BINDIR)/grimoired"
+	sed "s|@BINDIR@|$(BINDIR)|g" packaging/systemd/grimoired.service.in > "$(DESTDIR)$(SYSTEMD_USER_UNIT_DIR)/grimoired.service"
+	chmod 0644 "$(DESTDIR)$(SYSTEMD_USER_UNIT_DIR)/grimoired.service"
+
+dist:
+	mkdir -p dist
+	git archive --format=tar --prefix="grimoire-$(VERSION)/" HEAD | gzip -n > "dist/grimoire-$(VERSION).tar.gz"
+
+rpm: dist
+	rpmbuild -ba packaging/rpm/grimoire.spec \
+		--define "_sourcedir $(CURDIR)/dist" \
+		--define "_srcrpmdir $(CURDIR)/dist" \
+		--define "_rpmdir $(CURDIR)/dist"

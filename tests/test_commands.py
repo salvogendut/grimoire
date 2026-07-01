@@ -1,5 +1,7 @@
 import io
 from contextlib import redirect_stdout
+from pathlib import Path
+import tempfile
 from unittest import TestCase
 from unittest.mock import call, patch
 
@@ -356,3 +358,40 @@ class DispatchTests(TestCase):
         self.assertEqual(status, 0)
         call_shell.assert_called_once_with("RefreshHandles")
         self.assertEqual(output.getvalue().strip(), "action: refresh handles -> ok")
+
+
+class RuntimeConfigTests(TestCase):
+    def test_update_daemon_status_true(self):
+        with patch.object(grimoired, "call_shell_quiet", return_value=0) as call_shell:
+            status = grimoired.update_daemon_status(True)
+
+        self.assertEqual(status, 0)
+        call_shell.assert_called_once_with("SetDaemonStatus", "true")
+
+    def test_update_daemon_status_false(self):
+        with patch.object(grimoired, "call_shell_quiet", return_value=0) as call_shell:
+            status = grimoired.update_daemon_status(False)
+
+        self.assertEqual(status, 0)
+        call_shell.assert_called_once_with("SetDaemonStatus", "false")
+
+    def test_configured_path_prefers_environment(self):
+        with patch.dict(grimoired.os.environ, {"GRIMOIRE_TEST_PATH": "/tmp/custom-tool"}):
+            path = grimoired.configured_path(
+                "GRIMOIRE_TEST_PATH",
+                (Path("/missing-tool"),),
+            )
+
+        self.assertEqual(path, Path("/tmp/custom-tool"))
+
+    def test_configured_path_uses_existing_candidate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            candidate = Path(tmpdir) / "tool"
+            candidate.write_text("", encoding="utf-8")
+
+            path = grimoired.configured_path(
+                "GRIMOIRE_TEST_PATH",
+                (Path("/missing-tool"), candidate),
+            )
+
+        self.assertEqual(path, candidate)

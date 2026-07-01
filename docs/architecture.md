@@ -31,6 +31,7 @@ Responsibilities:
 
 - Track manageable `Meta.Window` instances.
 - Draw one colored frame and bird-name tab per tracked window.
+- Show a top-bar daemon status indicator based on daemon heartbeats.
 - Maintain a handle-to-window registry.
 - Expose a session-bus API for window inventory and commands.
 - Execute compositor-native actions: focus, close, minimize, maximize, and
@@ -58,13 +59,15 @@ Responsibilities:
 - Run voice activity detection and speech recognition.
 - Convert transcripts into structured intents.
 - Call the extension over DBus.
+- Send a heartbeat while listening so the shell indicator can show whether the
+  daemon is currently running.
 - Eventually manage wake word or push-to-talk activation.
 
 First implementation:
 
 - A deterministic grammar parser handles commands such as `focus yellow`.
-- ASR is intentionally deferred so window control can be tested before model
-  selection and audio latency become the main problem.
+- The local ASR path uses whisper.cpp when configured, with an override hook for
+  other recognizers.
 
 Candidate ASR backends:
 

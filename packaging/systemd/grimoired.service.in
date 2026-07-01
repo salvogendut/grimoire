@@ -1,0 +1,15 @@
+[Unit]
+Description=Grimoire voice command daemon
+Documentation=https://github.com/salvogendut/grimoire
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+EnvironmentFile=-%h/.config/grimoire/grimoired.env
+ExecStart=@BINDIR@/grimoired --listen-service --execute-listen --record-seconds 3
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

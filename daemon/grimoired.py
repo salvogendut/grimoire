@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 if __package__:
@@ -35,7 +36,18 @@ OBJECT_PATH = "/org/grimoire/Shell"
 INTERFACE = "org.grimoire.Shell"
 DEFAULT_WHISPER_CPP = Path("/var/home/salvogendut/Dev/whisper.cpp/build/bin/whisper-cli")
 DEFAULT_WHISPER_MODEL = Path("/var/home/salvogendut/Dev/whisper.cpp/models/ggml-base.en.bin")
+WHISPER_CPP_CANDIDATES = (
+    Path("/usr/bin/whisper-cli"),
+    Path("/usr/local/bin/whisper-cli"),
+    DEFAULT_WHISPER_CPP,
+)
+WHISPER_MODEL_CANDIDATES = (
+    Path.home() / ".local/share/grimoire/models/ggml-base.en.bin",
+    Path("/usr/share/grimoire/models/ggml-base.en.bin"),
+    DEFAULT_WHISPER_MODEL,
+)
 RECORD_RATE = 16000
+DAEMON_STATUS_INTERVAL_SECONDS = 2.0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -77,6 +89,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Run an Enter-to-record command loop. Press q then Enter to quit.",
     )
     parser.add_argument(
+        "--listen-service",
+        action="store_true",
+        help="Run a non-interactive continuous listen loop for a user service.",
+    )
+    parser.add_argument(
         "--execute-listen",
         action="store_true",
         help="Execute a listened command. Without this, listen mode is parse-only.",
@@ -86,6 +103,12 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=3.0,
         help="Seconds to record in --listen mode. Default: 3.0.",
+    )
+    parser.add_argument(
+        "--listen-delay",
+        type=float,
+        default=0.5,
+        help="Seconds to wait between --listen-service recordings. Default: 0.5.",
     )
     parser.add_argument(
         "--audio-file",
@@ -109,13 +132,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.listen_loop:
         return listen_loop(args)
 
+    if args.listen_service:
+        return listen_service(args)
+
     if args.listen or args.audio_file:
         return listen_once(args)
 
     if not args.command:
         parser.error(
             "--command is required unless --list-windows, --list-apps, --listen, "
-            "--listen-loop, or --audio-file is used"
+            "--listen-loop, --listen-service, or --audio-file is used"
         )
 
     parsed = parse_transcript(args.command)
@@ -135,32 +161,95 @@ def listen_loop(args: argparse.Namespace) -> int:
     print("Press Enter to record a command. Type q then Enter to quit.")
     print("Use Ctrl+C to stop immediately.")
 
-    while True:
+    with DaemonStatusHeartbeat():
+        while True:
+            try:
+                prompt = input("grimoire> ")
+            except EOFError:
+                print()
+                return 0
+            except KeyboardInterrupt:
+                print()
+                return 130
+
+            if prompt.strip().lower() in {"q", "quit", "exit"}:
+                return 0
+
+            parsed = listen_and_parse(args)
+            if not is_supported_command(parsed):
+                print("No supported command recognized.", file=sys.stderr)
+                continue
+
+            if args.dry_run:
+                continue
+
+            if requires_confirmation(parsed) and not confirm_command(parsed):
+                print("skipped")
+                continue
+
+            dispatch(parsed, trace=not args.quiet)
+
+
+def listen_service(args: argparse.Namespace) -> int:
+    if args.listen_delay < 0:
+        raise SystemExit("--listen-delay must be zero or greater")
+
+    print("Starting Grimoire listen service.", flush=True)
+    if not args.execute_listen:
+        print("Service is parse-only without --execute-listen.", file=sys.stderr)
+
+    with DaemonStatusHeartbeat():
         try:
-            prompt = input("grimoire> ")
-        except EOFError:
-            print()
-            return 0
+            while True:
+                parsed = listen_and_parse(args)
+                if not is_supported_command(parsed):
+                    print("No supported command recognized.", file=sys.stderr)
+                elif args.dry_run or not args.execute_listen:
+                    pass
+                elif requires_confirmation(parsed):
+                    print(
+                        f"Skipped destructive command in service mode: "
+                        f"{parsed.action} {parsed.handle}",
+                        file=sys.stderr,
+                    )
+                else:
+                    dispatch(parsed, trace=not args.quiet)
+
+                if args.listen_delay:
+                    time.sleep(args.listen_delay)
         except KeyboardInterrupt:
-            print()
             return 130
 
-        if prompt.strip().lower() in {"q", "quit", "exit"}:
-            return 0
 
-        parsed = listen_and_parse(args)
-        if not is_supported_command(parsed):
-            print("No supported command recognized.", file=sys.stderr)
-            continue
+class DaemonStatusHeartbeat:
+    def __init__(self, interval: float = DAEMON_STATUS_INTERVAL_SECONDS) -> None:
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
 
-        if args.dry_run:
-            continue
+    def __enter__(self) -> DaemonStatusHeartbeat:
+        update_daemon_status(True)
+        self._thread = threading.Thread(
+            target=self._run,
+            name="grimoire-daemon-status",
+            daemon=True,
+        )
+        self._thread.start()
+        return self
 
-        if requires_confirmation(parsed) and not confirm_command(parsed):
-            print("skipped")
-            continue
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=1.0)
+        update_daemon_status(False)
 
-        dispatch(parsed, trace=not args.quiet)
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval):
+            update_daemon_status(True)
+
+
+def update_daemon_status(running: bool) -> int:
+    return call_shell_quiet("SetDaemonStatus", "true" if running else "false")
 
 
 def listen_once(args: argparse.Namespace) -> int:
@@ -252,17 +341,19 @@ def transcribe_audio(audio_path: Path, tmpdir: Path, asr_command: str | None) ->
             raise SystemExit(format_failure(command, result, "run ASR command"))
         return normalize_transcript(result.stdout)
 
-    whisper_cli = Path(os.environ.get("GRIMOIRE_WHISPER_CLI", DEFAULT_WHISPER_CPP))
-    whisper_model = Path(os.environ.get("GRIMOIRE_WHISPER_MODEL", DEFAULT_WHISPER_MODEL))
+    whisper_cli = configured_path("GRIMOIRE_WHISPER_CLI", WHISPER_CPP_CANDIDATES)
+    whisper_model = configured_path("GRIMOIRE_WHISPER_MODEL", WHISPER_MODEL_CANDIDATES)
 
     if not whisper_cli.exists():
         raise SystemExit(
             f"whisper.cpp binary not found: {whisper_cli}\n"
+            f"Checked: {format_path_candidates(WHISPER_CPP_CANDIDATES)}\n"
             "Set GRIMOIRE_WHISPER_CLI or pass --asr-command."
         )
     if not whisper_model.exists():
         raise SystemExit(
             f"whisper.cpp model not found: {whisper_model}\n"
+            f"Checked: {format_path_candidates(WHISPER_MODEL_CANDIDATES)}\n"
             "Set GRIMOIRE_WHISPER_MODEL or pass --asr-command."
         )
 
@@ -286,6 +377,22 @@ def transcribe_audio(audio_path: Path, tmpdir: Path, asr_command: str | None) ->
         raise SystemExit(f"whisper.cpp did not write transcript: {transcript_path}")
 
     return normalize_transcript(transcript_path.read_text(encoding="utf-8"))
+
+
+def configured_path(env_name: str, candidates: tuple[Path, ...]) -> Path:
+    configured = os.environ.get(env_name)
+    if configured:
+        return Path(configured)
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return candidates[0]
+
+
+def format_path_candidates(candidates: tuple[Path, ...]) -> str:
+    return ", ".join(str(candidate) for candidate in candidates)
 
 
 def normalize_transcript(transcript: str) -> str:
@@ -549,6 +656,10 @@ def call_shell(method: str, *args: str) -> int:
         print(result.stderr.rstrip(), file=sys.stderr)
 
     return shell_status(result)
+
+
+def call_shell_quiet(method: str, *args: str) -> int:
+    return shell_status(run_gdbus(method, *args))
 
 
 def run_gdbus(method: str, *args: str) -> subprocess.CompletedProcess[str]:

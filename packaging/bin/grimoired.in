@@ -1,0 +1,3 @@
+#!/bin/sh
+export PYTHONPATH="@LIBEXECDIR@${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 "@LIBEXECDIR@/grimoired.py" "$@"
