@@ -15,7 +15,7 @@ GRIMOIRE_DATADIR ?= $(DATADIR)/grimoire
 
 .PHONY: compile-extension-schemas install install-extension enable-extension disable-extension list-windows dry-focus-yellow \
 	arm-execution disarm-execution execution-mode install-user-env reload-daemon start-daemon \
-	stop-daemon restart-daemon status-daemon logs-daemon check-asr check-ai test dist rpm
+	stop-daemon restart-daemon status-daemon logs-daemon check-asr check-ai setup-ai test dist rpm
 
 compile-extension-schemas:
 	glib-compile-schemas "$(EXTENSION_SOURCE)/schemas"
@@ -52,6 +52,9 @@ check-asr:
 
 check-ai:
 	python3 daemon/grimoired.py --check-ai
+
+setup-ai:
+	python3 daemon/grimoired.py --setup-ai
 
 install-user-env:
 	install -d "$(HOME)/.config/grimoire"
