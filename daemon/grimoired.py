@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import getpass
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import subprocess
@@ -61,10 +63,27 @@ AI_MODE_FALLBACK = "fallback"
 AI_MODE_VALIDATE = "validate"
 AI_MODES = (AI_MODE_OFF, AI_MODE_FALLBACK, AI_MODE_VALIDATE)
 AI_PROVIDER_OPENAI = "openai"
+AI_PROVIDER_ANTHROPIC = "anthropic"
+AI_PROVIDER_CLAUDE_CODE = "claude-code"
+AI_PROVIDERS = (AI_PROVIDER_OPENAI, AI_PROVIDER_ANTHROPIC, AI_PROVIDER_CLAUDE_CODE)
+AI_PROVIDER_ALIASES = {
+    "claude": AI_PROVIDER_CLAUDE_CODE,
+    "claude_code": AI_PROVIDER_CLAUDE_CODE,
+    "claudecode": AI_PROVIDER_CLAUDE_CODE,
+}
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com"
+DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
+ANTHROPIC_API_VERSION = "2023-06-01"
 DEFAULT_AI_MIN_CONFIDENCE = 0.65
 AI_REQUEST_TIMEOUT_SECONDS = 12.0
+CLAUDE_CLI_TIMEOUT_SECONDS = 30.0
+AI_KEY_CONSOLE_URLS = {
+    AI_PROVIDER_OPENAI: "https://platform.openai.com/api-keys",
+    AI_PROVIDER_ANTHROPIC: "https://console.anthropic.com/settings/keys",
+}
+USER_ENV_PATH = Path.home() / ".config/grimoire/grimoired.env"
 DAEMON_STATE_INACTIVE = "inactive"
 DAEMON_STATE_IDLE = "idle"
 DAEMON_STATE_RECORDING = "recording"
@@ -87,6 +106,10 @@ DAEMON_STATES = {
 }
 MAX_DAEMON_STATUS_DETAIL_LENGTH = 120
 _current_daemon_status: DaemonStatusHeartbeat | None = None
+
+
+class AIInterpreterError(RuntimeError):
+    """AI interpretation failed; the caller falls back to the deterministic parse."""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -141,6 +164,11 @@ def main(argv: list[str] | None = None) -> int:
         "--check-ai",
         action="store_true",
         help="Check whether the configured AI interpreter is available.",
+    )
+    parser.add_argument(
+        "--setup-ai",
+        action="store_true",
+        help="Interactively choose an AI provider and store its configuration.",
     )
     parser.add_argument(
         "--ai",
@@ -226,6 +254,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_ai:
         return check_ai()
 
+    if args.setup_ai:
+        return setup_ai()
+
     if args.listen_loop:
         return listen_loop(args)
 
@@ -239,7 +270,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "--command is required unless --list-windows, --list-apps, --listen, "
             "--execution-mode, --arm-execution, --disarm-execution, --check-asr, "
-            "--check-ai, --listen-loop, --listen-service, or --audio-file is used"
+            "--check-ai, --setup-ai, --listen-loop, --listen-service, or "
+            "--audio-file is used"
         )
 
     parsed = parse_with_optional_ai(args.command, args)
@@ -493,41 +525,92 @@ def normalize_ai_mode(mode: str | None) -> str:
 
 
 def interpret_command_with_ai(transcript: str, deterministic: ParsedCommand, mode: str) -> ParsedCommand:
-    provider = os.environ.get("GRIMOIRE_AI_PROVIDER", AI_PROVIDER_OPENAI).strip().lower()
-    if provider != AI_PROVIDER_OPENAI:
-        raise SystemExit(f"Unsupported AI provider: {provider}")
+    provider = ai_provider()
+    if provider == AI_PROVIDER_OPENAI:
+        payload = call_openai_interpreter(transcript, deterministic, mode)
+    elif provider == AI_PROVIDER_ANTHROPIC:
+        payload = call_anthropic_interpreter(transcript, deterministic, mode)
+    else:
+        payload = call_claude_cli_interpreter(transcript, deterministic, mode)
 
-    payload = call_openai_interpreter(transcript, deterministic, mode)
     return parsed_command_from_ai_payload(payload, transcript)
 
 
+def ai_provider() -> str:
+    raw = os.environ.get("GRIMOIRE_AI_PROVIDER", AI_PROVIDER_OPENAI).strip().lower()
+    provider = AI_PROVIDER_ALIASES.get(raw, raw)
+    if provider not in AI_PROVIDERS:
+        raise AIInterpreterError(f"unsupported AI provider: {raw}")
+
+    return provider
+
+
 def check_ai() -> int:
-    provider = os.environ.get("GRIMOIRE_AI_PROVIDER", AI_PROVIDER_OPENAI).strip().lower()
-    if provider != AI_PROVIDER_OPENAI:
-        print(f"ai-provider: unsupported {provider}")
+    try:
+        provider = ai_provider()
+    except AIInterpreterError as error:
+        print(f"ai-provider: {error}")
         return 1
 
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-    model = os.environ.get("GRIMOIRE_OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip()
-    base_url = openai_base_url()
     print(f"ai-provider: {provider}")
-    print(f"openai-model: {model}")
-    print(f"openai-base-url: {base_url}")
-    print(f"openai-api-key: {'set' if api_key else 'missing'}")
+    print(f"ai-mode: {os.environ.get('GRIMOIRE_AI_MODE', '').strip() or AI_MODE_OFF}")
+
+    if provider == AI_PROVIDER_OPENAI:
+        return check_key_provider(
+            "openai",
+            "OPENAI_API_KEY",
+            os.environ.get("GRIMOIRE_OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip(),
+            openai_base_url(),
+        )
+
+    if provider == AI_PROVIDER_ANTHROPIC:
+        return check_key_provider(
+            "anthropic",
+            "ANTHROPIC_API_KEY",
+            os.environ.get("GRIMOIRE_ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL).strip(),
+            anthropic_base_url(),
+        )
+
+    return check_claude_cli()
+
+
+def check_key_provider(label: str, key_env: str, model: str, base_url: str) -> int:
+    api_key = os.environ.get(key_env, "").strip()
+    print(f"{label}-model: {model}")
+    print(f"{label}-base-url: {base_url}")
+    print(f"{label}-api-key: {'set' if api_key else 'missing'}")
 
     try:
         validate_ai_base_url(base_url)
     except ValueError as error:
-        print(f"openai-base-url: invalid: {error}")
+        print(f"{label}-base-url: invalid: {error}")
         return 1
 
-    return 0 if api_key else 1
+    if not api_key:
+        print(f"hint: run 'grimoired --setup-ai' or set {key_env}")
+        return 1
+
+    return 0
+
+
+def check_claude_cli() -> int:
+    cli = claude_cli_path()
+    model = os.environ.get("GRIMOIRE_CLAUDE_MODEL", "").strip()
+    print_path_status("claude-cli", cli or Path("claude"), cli is not None)
+    print(f"claude-model: {model or '(claude default)'}")
+
+    if cli is None:
+        print("hint: install Claude Code or set GRIMOIRE_CLAUDE_CLI")
+        return 1
+
+    print("auth: reuses your Claude Code login; run 'claude' once to sign in")
+    return 0
 
 
 def call_openai_interpreter(transcript: str, deterministic: ParsedCommand, mode: str) -> dict[str, object]:
     api_key = os.environ.get("OPENAI_API_KEY", "").strip()
     if not api_key:
-        raise SystemExit("OPENAI_API_KEY is required for the OpenAI AI interpreter")
+        raise AIInterpreterError("OPENAI_API_KEY is required for the OpenAI AI interpreter")
 
     base_url = openai_base_url()
     validate_ai_base_url(base_url)
@@ -549,41 +632,336 @@ def call_openai_interpreter(transcript: str, deterministic: ParsedCommand, mode:
             },
         },
     }
-    body = json.dumps(request, ensure_ascii=False).encode("utf-8")
-    http_request = urllib.request.Request(
+    raw = post_ai_request(
         endpoint,
-        data=body,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
+        request,
+        {"Authorization": f"Bearer {api_key}"},
+        "OpenAI interpreter",
     )
-
-    try:
-        with urllib.request.urlopen(http_request, timeout=AI_REQUEST_TIMEOUT_SECONDS) as response:
-            raw = response.read().decode("utf-8")
-    except urllib.error.HTTPError as error:
-        message = error.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"OpenAI interpreter request failed: HTTP {error.code}: {message}") from error
-    except urllib.error.URLError as error:
-        raise SystemExit(f"OpenAI interpreter request failed: {error}") from error
 
     try:
         response_payload = json.loads(raw)
         output_text = extract_openai_output_text(response_payload)
         parsed = json.loads(output_text)
     except (TypeError, ValueError, json.JSONDecodeError) as error:
-        raise SystemExit(f"OpenAI interpreter returned invalid JSON: {error}") from error
+        raise AIInterpreterError(f"OpenAI interpreter returned invalid JSON: {error}") from error
 
     if not isinstance(parsed, dict):
-        raise SystemExit("OpenAI interpreter returned a non-object JSON payload")
+        raise AIInterpreterError("OpenAI interpreter returned a non-object JSON payload")
 
     return parsed
 
 
+def call_anthropic_interpreter(transcript: str, deterministic: ParsedCommand, mode: str) -> dict[str, object]:
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise AIInterpreterError("ANTHROPIC_API_KEY is required for the Anthropic AI interpreter")
+
+    base_url = anthropic_base_url()
+    validate_ai_base_url(base_url)
+    endpoint = f"{base_url.rstrip('/')}/v1/messages"
+    model = os.environ.get("GRIMOIRE_ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL).strip() or DEFAULT_ANTHROPIC_MODEL
+    request = {
+        "model": model,
+        "max_tokens": 512,
+        "system": ai_interpreter_instructions(),
+        "messages": [
+            {
+                "role": "user",
+                "content": json.dumps(
+                    ai_interpreter_input(transcript, deterministic, mode),
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+        "tools": [
+            {
+                "name": "grimoire_command",
+                "description": "Report the single Grimoire command parsed from the transcript.",
+                "input_schema": ai_interpreter_schema(),
+            },
+        ],
+        "tool_choice": {"type": "tool", "name": "grimoire_command"},
+    }
+    raw = post_ai_request(
+        endpoint,
+        request,
+        {"x-api-key": api_key, "anthropic-version": ANTHROPIC_API_VERSION},
+        "Anthropic interpreter",
+    )
+
+    try:
+        response_payload = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise AIInterpreterError(f"Anthropic interpreter returned invalid JSON: {error}") from error
+
+    return extract_anthropic_tool_input(response_payload)
+
+
+def extract_anthropic_tool_input(response_payload: object) -> dict[str, object]:
+    content = response_payload.get("content") if isinstance(response_payload, dict) else None
+    if isinstance(content, list):
+        for block in content:
+            if (
+                isinstance(block, dict) and
+                block.get("type") == "tool_use" and
+                isinstance(block.get("input"), dict)
+            ):
+                return block["input"]
+
+    raise AIInterpreterError("Anthropic interpreter returned no grimoire_command tool call")
+
+
+def call_claude_cli_interpreter(transcript: str, deterministic: ParsedCommand, mode: str) -> dict[str, object]:
+    cli = claude_cli_path()
+    if cli is None:
+        raise AIInterpreterError(
+            "claude CLI not found; install Claude Code or set GRIMOIRE_CLAUDE_CLI"
+        )
+
+    command = [
+        str(cli),
+        "-p",
+        claude_cli_prompt(transcript, deterministic, mode),
+        "--output-format",
+        "json",
+    ]
+    model = os.environ.get("GRIMOIRE_CLAUDE_MODEL", "").strip()
+    if model:
+        command += ["--model", model]
+
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=CLAUDE_CLI_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AIInterpreterError(
+            f"claude CLI timed out after {CLAUDE_CLI_TIMEOUT_SECONDS:.0f}s"
+        ) from error
+    except OSError as error:
+        raise AIInterpreterError(f"claude CLI failed to start: {error}") from error
+
+    if result.returncode != 0:
+        raise AIInterpreterError(format_failure(command, result, "run claude CLI interpreter"))
+
+    return parse_claude_cli_payload(result.stdout)
+
+
+def claude_cli_prompt(transcript: str, deterministic: ParsedCommand, mode: str) -> str:
+    return (
+        f"{ai_interpreter_instructions()}\n"
+        "Respond with one JSON object matching this JSON Schema and nothing else:\n"
+        f"{json.dumps(ai_interpreter_schema())}\n"
+        "Input:\n"
+        f"{json.dumps(ai_interpreter_input(transcript, deterministic, mode), ensure_ascii=False)}"
+    )
+
+
+def parse_claude_cli_payload(stdout: str) -> dict[str, object]:
+    try:
+        wrapper = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        raise AIInterpreterError(f"claude CLI returned invalid JSON: {error}") from error
+
+    if not isinstance(wrapper, dict):
+        raise AIInterpreterError("claude CLI returned a non-object JSON payload")
+
+    if wrapper.get("is_error"):
+        raise AIInterpreterError(f"claude CLI reported an error: {wrapper.get('result')}")
+
+    result = wrapper.get("result")
+    if not isinstance(result, str):
+        raise AIInterpreterError("claude CLI response is missing a result string")
+
+    payload = extract_json_object(result)
+    if payload is None:
+        raise AIInterpreterError("claude CLI result did not contain a JSON object")
+
+    return payload
+
+
+def extract_json_object(text: str) -> dict[str, object] | None:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+
+    try:
+        parsed = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
+def claude_cli_path() -> Path | None:
+    configured = os.environ.get("GRIMOIRE_CLAUDE_CLI", "").strip()
+    if configured:
+        path = Path(configured)
+        return path if path.exists() else None
+
+    resolved = shutil.which("claude")
+    return Path(resolved) if resolved else None
+
+
+def post_ai_request(
+    endpoint: str,
+    request: dict[str, object],
+    headers: dict[str, str],
+    label: str,
+) -> str:
+    body = json.dumps(request, ensure_ascii=False).encode("utf-8")
+    http_request = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={"Content-Type": "application/json", **headers},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(http_request, timeout=AI_REQUEST_TIMEOUT_SECONDS) as response:
+            return response.read().decode("utf-8")
+    except urllib.error.HTTPError as error:
+        message = error.read().decode("utf-8", errors="replace")
+        raise AIInterpreterError(f"{label} request failed: HTTP {error.code}: {message}") from error
+    except urllib.error.URLError as error:
+        raise AIInterpreterError(f"{label} request failed: {error}") from error
+
+
 def openai_base_url() -> str:
     return os.environ.get("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL).strip() or DEFAULT_OPENAI_BASE_URL
+
+
+def anthropic_base_url() -> str:
+    return os.environ.get("ANTHROPIC_BASE_URL", DEFAULT_ANTHROPIC_BASE_URL).strip() or DEFAULT_ANTHROPIC_BASE_URL
+
+
+def setup_ai() -> int:
+    if not sys.stdin.isatty():
+        raise SystemExit("--setup-ai requires an interactive terminal")
+
+    print("Grimoire AI setup")
+    print("The AI interpreter is optional. It only normalizes transcripts into")
+    print("allowlisted commands; the daemon validates every intent before dispatch.")
+    print()
+
+    provider = prompt_choice(
+        "Which AI provider should interpret transcripts?",
+        (
+            (AI_PROVIDER_CLAUDE_CODE, "Anthropic, via your Claude Code login (no API key)"),
+            (AI_PROVIDER_ANTHROPIC, "Anthropic, with an API key"),
+            (AI_PROVIDER_OPENAI, "OpenAI, with an API key"),
+        ),
+    )
+    updates = {"GRIMOIRE_AI_PROVIDER": provider}
+
+    if provider == AI_PROVIDER_CLAUDE_CODE:
+        cli = claude_cli_path()
+        if cli:
+            print(f"Found claude CLI: {cli}")
+            print("Grimoire will reuse your Claude Code login. If you have never")
+            print("signed in, run 'claude' once to authenticate in the browser.")
+        else:
+            print("warning: claude CLI not found.")
+            print("Install Claude Code (https://claude.com/claude-code), then run")
+            print("'claude' once to sign in via the browser.")
+    else:
+        key_env = "OPENAI_API_KEY" if provider == AI_PROVIDER_OPENAI else "ANTHROPIC_API_KEY"
+        console_url = AI_KEY_CONSOLE_URLS[provider]
+        print(f"Create an API key at: {console_url}")
+        if prompt_yes_no("Open that page in your browser now?"):
+            open_in_browser(console_url)
+
+        key = getpass.getpass("Paste the API key (input hidden, Enter keeps the current value): ").strip()
+        if key:
+            updates[key_env] = key
+        else:
+            print(f"Keeping any existing {key_env}.")
+
+    print()
+    updates["GRIMOIRE_AI_MODE"] = prompt_choice(
+        "When should the AI interpreter run?",
+        (
+            (AI_MODE_FALLBACK, "fallback: only when the deterministic parser fails"),
+            (AI_MODE_VALIDATE, "validate: also confirm deterministic parses"),
+            (AI_MODE_OFF, "off: configure now, keep disabled"),
+        ),
+    )
+
+    update_env_file(USER_ENV_PATH, updates)
+    print()
+    print(f"Wrote {USER_ENV_PATH}")
+    print("Verify with: make check-ai")
+    print("Apply to the running service with: systemctl --user restart grimoired.service")
+    return 0
+
+
+def prompt_choice(question: str, options: tuple[tuple[str, str], ...]) -> str:
+    print(question)
+    for number, (_, label) in enumerate(options, start=1):
+        print(f"  {number}) {label}")
+
+    while True:
+        answer = input(f"Choose 1-{len(options)}: ").strip().lower()
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            return options[int(answer) - 1][0]
+
+        for value, _ in options:
+            if answer == value:
+                return value
+
+        print("Please answer with one of the listed numbers.")
+
+
+def prompt_yes_no(question: str) -> bool:
+    return input(f"{question} [y/N] ").strip().lower() in {"y", "yes"}
+
+
+def open_in_browser(url: str) -> None:
+    try:
+        subprocess.Popen(
+            ["xdg-open", url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as error:
+        print(f"Could not open the browser: {error}", file=sys.stderr)
+
+
+_ENV_LINE_PATTERN = re.compile(r"\s*#?\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
+
+
+def update_env_file(path: Path, updates: dict[str, str]) -> None:
+    if path.exists():
+        lines = path.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = ["# Grimoire service environment, read by grimoired.service."]
+
+    remaining = dict(updates)
+    output: list[str] = []
+    for line in lines:
+        match = _ENV_LINE_PATTERN.match(line)
+        name = match.group(1) if match else None
+        if name in remaining:
+            output.append(format_env_line(name, remaining.pop(name)))
+        else:
+            output.append(line)
+
+    output.extend(format_env_line(name, value) for name, value in remaining.items())
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(output) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+
+
+def format_env_line(name: str, value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'{name}="{escaped}"'
 
 
 def validate_ai_base_url(base_url: str) -> None:

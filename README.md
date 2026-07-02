@@ -274,19 +274,49 @@ Check AI configuration:
 make check-ai
 ```
 
-The first provider is OpenAI's Responses API. Configure it with:
+Configure a provider interactively:
 
 ```sh
-GRIMOIRE_AI_PROVIDER=openai
-OPENAI_API_KEY=...
-GRIMOIRE_OPENAI_MODEL=gpt-4o-mini
+make setup-ai
 ```
 
-`OPENAI_BASE_URL` must use HTTPS unless it points to localhost. This protects
-the transcript in transit, but it is not end-to-end encryption: a cloud model
-must receive the transcript in readable form to interpret it. Grimoire sends
-only minimal context by default: transcript, allowed actions, allowed handles,
-and deterministic parser output. It does not send screenshots or window titles.
+The wizard asks which provider to use and stores the result in
+`~/.config/grimoire/grimoired.env` (created with mode 0600):
+
+- `claude-code`: Anthropic models through your existing Claude Code login. No
+  API key is handled by Grimoire; the daemon shells out to the `claude` CLI,
+  which owns authentication. If you have never signed in, run `claude` once
+  and it walks you through the browser sign-in. Slower per command than the
+  direct APIs because it spawns the CLI, but there is nothing to configure.
+- `anthropic`: the Anthropic Messages API with an `ANTHROPIC_API_KEY`. The
+  wizard offers to open the key console in your browser and reads the pasted
+  key without echoing it.
+- `openai`: OpenAI's Responses API with an `OPENAI_API_KEY`, same key flow.
+
+Neither Anthropic nor OpenAI currently offers a browser OAuth flow that
+third-party applications may use, so API providers need a pasted key; the
+`claude-code` provider is the no-key path.
+
+Manual configuration uses the same variables the wizard writes:
+
+```sh
+GRIMOIRE_AI_PROVIDER=openai|anthropic|claude-code
+GRIMOIRE_AI_MODE=fallback
+OPENAI_API_KEY=...            # openai
+GRIMOIRE_OPENAI_MODEL=gpt-4o-mini
+ANTHROPIC_API_KEY=...         # anthropic
+GRIMOIRE_ANTHROPIC_MODEL=claude-haiku-4-5-20251001
+GRIMOIRE_CLAUDE_CLI=...       # claude-code, defaults to 'claude' on PATH
+GRIMOIRE_CLAUDE_MODEL=...     # claude-code, defaults to the CLI's model
+```
+
+`OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL` must use HTTPS unless they point to
+localhost. This protects the transcript in transit, but it is not end-to-end
+encryption: a cloud model must receive the transcript in readable form to
+interpret it. Grimoire sends only minimal context by default: transcript,
+allowed actions, allowed handles, and deterministic parser output. It does not
+send screenshots or window titles. Whatever the provider returns is validated
+against the local allowlists before anything executes.
 
 For service installs, put recognizer, AI, and service argument overrides in:
 
@@ -300,7 +330,7 @@ The RPM installs an example at:
 /usr/share/grimoire/grimoired.env.example
 ```
 
-Create your user config from it:
+Create your user config from it (or let `grimoired --setup-ai` create it):
 
 ```sh
 mkdir -p ~/.config/grimoire
@@ -313,10 +343,10 @@ Example values:
 GRIMOIRE_DAEMON_ARGS="--listen-service --execute-listen --record-seconds 3"
 GRIMOIRE_WHISPER_CLI=/usr/bin/whisper-cli
 GRIMOIRE_WHISPER_MODEL=/home/salvogendut/.local/share/grimoire/models/ggml-base.en.bin
-GRIMOIRE_AI_PROVIDER=openai
-OPENAI_API_KEY=...
+GRIMOIRE_AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...
 GRIMOIRE_AI_MODE=fallback
-GRIMOIRE_OPENAI_MODEL=gpt-4o-mini
+GRIMOIRE_ANTHROPIC_MODEL=claude-haiku-4-5-20251001
 ```
 
 After editing the file, reload and restart the user service:
